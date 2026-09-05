@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0b0c10">
+    <title>LK TEAM</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
+    <div class="app-shell">
+        <header class="topbar">
+            <div class="brand">
+                <div class="brand-mark" aria-hidden="true">LK</div>
+                <div>
+                    <span class="eyebrow">WORKSPACE</span>
+                    <strong>LK TEAM</strong>
+                </div>
+            </div>
+            <button class="icon-button" id="settingsBtn" aria-label="Настройки">
+                <svg viewBox="0 0 24 24"><path d="M12 15.4a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8Z"/><path d="M19.4 13.5c.1-1 .1-2 0-3l1.8-1.4-2-3.4-2.2.9c-.8-.6-1.7-1.1-2.6-1.5L14 2.8h-4l-.4 2.3c-.9.4-1.8.9-2.6 1.5l-2.2-.9-2 3.4 1.8 1.4c-.1 1-.1 2 0 3l-1.8 1.4 2 3.4 2.2-.9c.8.6 1.7 1.1 2.6 1.5l.4 2.3h4l.4-2.3c.9-.4 1.8-.9 2.6-1.5l2.2.9 2-3.4-1.8-1.4Z"/></svg>
+            </button>
+        </header>
+
+        <main>
+            <section class="screen active" data-screen="home">
+                <article class="hero-card">
+                    <div class="hero-copy">
+                        <span class="status-pill"><i></i> Профиль активен</span>
+                        <p class="hero-label">Текущий баланс</p>
+                        <h1 id="myBalance">$0.00</h1>
+                        <div class="hero-meta">
+                            <span id="userInfo">Загрузка…</span>
+                            <span class="dot-separator"></span>
+                            <span id="rankLabel">Студент</span>
+                        </div>
+                    </div>
+                    <div class="hero-orbit" aria-hidden="true"><span></span></div>
+                </article>
+
+                <div class="metric-grid">
+                    <article class="metric-card">
+                        <div class="metric-icon violet">
+                            <svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+                        </div>
+                        <span>Локи</span>
+                        <strong id="lockCount">0</strong>
+                    </article>
+                    <article class="metric-card">
+                        <div class="metric-icon mint">
+                            <svg viewBox="0 0 24 24"><path d="M12 3v18M17 7.5c0-1.7-2.2-3-5-3s-5 1.3-5 3 2.2 3 5 3 5 1.3 5 3-2.2 3-5 3-5-1.3-5-3"/></svg>
+                        </div>
+                        <span>Профиты</span>
+                        <strong id="profitCount">0</strong>
+                    </article>
+                </div>
+
+                <div class="section-heading">
+                    <div><span class="eyebrow">АКТИВНОСТЬ</span><h2>Последние локи</h2></div>
+                    <span class="count-badge" id="lockHistoryCount">0</span>
+                </div>
+                <div class="timeline" id="lockHistory"><div class="empty-state">Пока нет записей</div></div>
+            </section>
+
+            <section class="screen" data-screen="profits">
+                <div class="page-title">
+                    <span class="eyebrow">ФИНАНСЫ</span>
+                    <h1>Профиты</h1>
+                    <p>Ваш результат и доходы команды</p>
+                </div>
+
+                <article class="summary-card">
+                    <span>Всего заработано</span>
+                    <strong id="earnedTotal">$0.00</strong>
+                    <div class="summary-line"><span></span></div>
+                </article>
+
+                <div class="section-heading"><div><span class="eyebrow">ИСТОРИЯ</span><h2>Начисления</h2></div></div>
+                <div class="timeline" id="profitHistory"><div class="empty-state">Пока нет начислений</div></div>
+
+                <div class="section-heading"><div><span class="eyebrow">КОМАНДА</span><h2>Реферальная система</h2></div></div>
+                <article class="ref-card">
+                    <div class="ref-row"><span><i>1</i> Первый уровень</span><strong><b id="refCount1">0</b> · $<b id="refMoney1">0</b></strong></div>
+                    <div class="ref-row"><span><i>2</i> Второй уровень</span><strong><b id="refCount2">0</b> · $<b id="refMoney2">0</b></strong></div>
+                    <div class="ref-row"><span><i>3</i> Третий уровень</span><strong><b id="refCount3">0</b> · $<b id="refMoney3">0</b></strong></div>
+                    <button class="primary-button" id="inviteBtn">Скопировать ссылку</button>
+                </article>
+            </section>
+
+            <section class="screen" data-screen="rating">
+                <div class="page-title">
+                    <span class="eyebrow">LK TEAM</span>
+                    <h1>Рейтинг</h1>
+                    <p>Лучшие участники проекта</p>
+                </div>
+                <div class="segment-control" role="tablist">
+                    <button class="active" data-rating="locks">Локи</button>
+                    <button data-rating="balance">Баланс</button>
+                    <button data-rating="profits">Профиты</button>
+                </div>
+                <div class="leaderboard" id="leaderboard"><div class="empty-state">Загрузка рейтинга…</div></div>
+            </section>
+
+            <section class="screen" data-screen="profile">
+                <div class="profile-head">
+                    <div class="avatar" id="profileAvatar">LK</div>
+                    <h1 id="profileName">Профиль</h1>
+                    <p id="profileUsername">@username</p>
+                    <span class="rank-chip" id="profileRank">Студент</span>
+                </div>
+                <article class="profile-card">
+                    <div><span>В проекте</span><strong id="joinedAt">—</strong></div>
+                    <div><span>Место в рейтинге</span><strong id="topPlace">—</strong></div>
+                    <div><span>Статус</span><strong class="success">Активен</strong></div>
+                </article>
+                <button class="secondary-button" id="profileSettingsBtn">Настроить профиль</button>
+            </section>
+        </main>
+
+        <nav class="bottom-nav" aria-label="Навигация">
+            <span class="nav-indicator"></span>
+            <button class="active" data-target="home"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10Z"/></svg><span>Главная</span></button>
+            <button data-target="profits"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m6 14v-7m5 7V3"/></svg><span>Профиты</span></button>
+            <button data-target="rating"><svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4H4v3a5 5 0 0 0 5 5m8-8h3v3a5 5 0 0 1-5 5M7 3h10v6a5 5 0 0 1-10 0V3Z"/></svg><span>Топ</span></button>
+            <button data-target="profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Профиль</span></button>
+        </nav>
+    </div>
+
+    <div class="sheet-overlay" id="settingsOverlay" aria-hidden="true">
+        <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+            <div class="sheet-handle"></div>
+            <div class="sheet-header"><div><span class="eyebrow">ПРОФИЛЬ</span><h2 id="settingsTitle">Настройки</h2></div><button class="close-button" id="settingsCloseBtn">×</button></div>
+            <label class="field"><span>Отображаемый тег</span><input id="tagInput" maxlength="20" autocomplete="off" placeholder="Ваш тег"></label>
+            <button class="primary-button" id="tagSaveBtn">Сохранить тег</button>
+            <label class="field"><span>Ранг</span><select id="rankSelect">
+                <option value="Студент" data-price="0">Студент</option>
+                <option value="Чемпион" data-price="1000">Чемпион · $1 000</option>
+                <option value="Волк с Уолл-Стрит" data-price="3000">Волк с Уолл-Стрит · $3 000</option>
+                <option value="Легенда" data-price="5000">Легенда · $5 000</option>
+                <option value="Босс Верховного стола" data-price="10000">Босс Верховного стола · $10 000</option>
+            </select></label>
+            <p class="field-hint" id="rankHint"></p>
+            <button class="secondary-button" id="rankSaveBtn">Применить ранг</button>
+        </section>
+    </div>
+
+    <div class="loader active" id="loader"><div class="loader-mark">LK</div><div class="loader-line"><span></span></div></div>
+    <div class="toast" id="toast" role="status"></div>
+    <script src="script.js"></script>
+</body>
+</html>
