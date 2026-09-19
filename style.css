@@ -1692,3 +1692,8 @@ button:disabled {
         transition-duration: .01ms !important;
     }
 }
+
+.member-seal > span {
+    position: relative;
+    top: -6px;
+}
