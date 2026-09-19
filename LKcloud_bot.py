@@ -89,14 +89,26 @@ class AdminStates(StatesGroup):
 # =========================================================
 # БАЗА ДАННЫХ MONGO DB (ВМЕСТО JSON И БЭКАПОВ)
 # =========================================================
-MONGO_URL = os.environ.get("MONGO_URL")
+MONGO_URL = (os.environ.get("MONGO_URL") or "").strip()
+MONGO_DB_NAME = "tg_bot_database"
+
+# Единственная production-база. Без URI бот не имеет права запускаться с пустым профилем.
+if not MONGO_URL:
+    raise RuntimeError("MONGO_URL is required; refusing to start without the production database")
 
 # Страховка от мусора ${{...}} в интерфейсе Railway
-if MONGO_URL and "${{" in MONGO_URL:
-    MONGO_URL = MONGO_URL.split("}")[-1]
+if "${{" in MONGO_URL:
+    MONGO_URL = MONGO_URL.split("}")[-1].strip()
 
-client = pymongo.MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
-db = client["tg_bot_database"]
+client = pymongo.MongoClient(
+    MONGO_URL,
+    serverSelectionTimeoutMS=10000,
+    connectTimeoutMS=10000,
+    socketTimeoutMS=20000,
+    retryWrites=True,
+)
+client.admin.command("ping")
+db = client[MONGO_DB_NAME]
 users_col = db["users"]
 settings_col = db["settings"]
 applications_col = db["applications"]
@@ -161,8 +173,8 @@ def load_db():
         
         return loaded_users
     except Exception as e:
-        logging.critical(f"🛑 Не удалось загрузить базу данных из MongoDB: {e}")
-        return {}
+        logging.critical(f"🛑 Не удалось загрузить production-базу MongoDB: {e}")
+        raise RuntimeError("MongoDB load failed; refusing to start with empty user data") from e
 
 import concurrent.futures
 # Одна очередь сохраняет снимки строго по порядку: старые записи больше не могут
@@ -280,11 +292,14 @@ rank_migration = {
     '🌌 Легенда': 'Легенда',
     '👑 Босс Верховного стола': 'Босс Верховного стола',
 }
+migrated_user_ids = []
 for uid, info in user_data.items():
     old_rank = info.get('rank', '')
     if old_rank in rank_migration:
         info['rank'] = rank_migration[old_rank]
-save_db()
+        migrated_user_ids.append(uid)
+if migrated_user_ids:
+    save_db(user_ids=migrated_user_ids, include_settings=False)
 
 # =========================================================
 # РЕФЕРАЛЬНЫЕ ПРОЦЕНТЫ
@@ -394,47 +409,79 @@ async def get_worker_card_identity(user_id: int, username_fallback: str):
 
 
 def init_user(chat_id: int, first_name: str, username: str | None = None):
-    # Проверяем blacklist
+    """Return the canonical MongoDB profile without ever resetting an existing user."""
     if is_blacklisted(chat_id):
-        # Возвращаем пользователя с флагом blocked
         return {
             'name': first_name,
             'cash': 0.0,
             'status_approved': False,
-            'blocked': True  # ← ФЛАГ что пользователь забанен
+            'blocked': True,
         }
-    
-    if chat_id not in user_data:
-        is_admin = (chat_id in ADMIN_IDS)
-        user_data[chat_id] = {
-            'name': first_name,
-            'username': username,
-            'username_lower': username.lower() if username else None,
-            'cash': 0.0,
-            'profits': 0,
-            'profit_history': [],
-            'locks': 0,
-            'lock_history': [],
-            'tag': 'NOTSCAM',
-            'rank': RANKS_CONFIG['student']['name'],
-            'joined_at': time.time(),
-            'status_approved': is_admin,
-            'blocked': False,  # ← ФЛАГ
-            'referrer_l1': None,   # кто пригласил напрямую
-            'referrer_l2': None,   # реферер реферера
-            'referrer_l3': None,   # реферер реферера реферера
-            'ref_count_l1': 0, 'ref_money_l1': 0.0,
-            'ref_count_l2': 0, 'ref_money_l2': 0.0,
-            'ref_count_l3': 0, 'ref_money_l3': 0.0,
-        }
-        save_db(user_ids=[chat_id], include_settings=False)
-    else:
-        user_data[chat_id]['name'] = first_name
-        if username and user_data[chat_id].get('username') != username:
-            user_data[chat_id]['username'] = username
-            user_data[chat_id]['username_lower'] = username.lower()
-            save_db(user_ids=[chat_id], include_settings=False)
-    return user_data[chat_id]
+
+    if chat_id in user_data:
+        data = user_data[chat_id]
+        identity_update = {}
+        if data.get('name') != first_name:
+            data['name'] = first_name
+            identity_update['name'] = first_name
+        if username and data.get('username') != username:
+            data['username'] = username
+            data['username_lower'] = username.lower()
+            identity_update['username'] = username
+            identity_update['username_lower'] = username.lower()
+        if identity_update:
+            users_col.update_one({'user_id': int(chat_id)}, {'$set': identity_update}, upsert=False)
+        return data
+
+    # A historical approved application restores access, but never overwrites money,
+    # locks, histories, rank, tag, referrals, or any other existing profile field.
+    approved_before = applications_col.find_one(
+        {'user_id': int(chat_id), 'status': 'approved'},
+        {'_id': 1},
+    ) is not None
+    defaults = {
+        'name': first_name,
+        'username': username,
+        'username_lower': username.lower() if username else None,
+        'cash': 0.0,
+        'profits': 0,
+        'profit_history': [],
+        'locks': 0,
+        'lock_history': [],
+        'tag': 'NOTSCAM',
+        'rank': RANKS_CONFIG['student']['name'],
+        'joined_at': time.time(),
+        'status_approved': (chat_id in ADMIN_IDS) or approved_before,
+        'blocked': False,
+        'referrer_l1': None,
+        'referrer_l2': None,
+        'referrer_l3': None,
+        'ref_count_l1': 0, 'ref_money_l1': 0.0,
+        'ref_count_l2': 0, 'ref_money_l2': 0.0,
+        'ref_count_l3': 0, 'ref_money_l3': 0.0,
+    }
+    identity = {
+        'name': first_name,
+        'username': username,
+        'username_lower': username.lower() if username else None,
+    }
+    try:
+        document = users_col.find_one_and_update(
+            {'user_id': int(chat_id)},
+            {'$setOnInsert': defaults, '$set': identity},
+            upsert=True,
+            return_document=pymongo.ReturnDocument.AFTER,
+        )
+    except Exception as e:
+        logging.exception("Не удалось загрузить или создать профиль %s", chat_id)
+        raise RuntimeError("MongoDB profile operation failed") from e
+
+    if not document:
+        raise RuntimeError(f"MongoDB did not return profile {chat_id}")
+    document.pop('_id', None)
+    document.pop('user_id', None)
+    user_data[chat_id] = document
+    return document
 
 def register_referral(new_user_id: int, referrer_id: int):
     """Привязывает реферальную цепочку к новому пользователю."""
@@ -461,7 +508,9 @@ def register_referral(new_user_id: int, referrer_id: int):
             data['referrer_l3'] = l3
             user_data[l3]['ref_count_l3'] += 1
 
-    save_db()
+    affected_ids = {new_user_id, referrer_id}
+    affected_ids.update(uid for uid in (data.get('referrer_l2'), data.get('referrer_l3')) if uid in user_data)
+    save_db(user_ids=list(affected_ids), include_settings=False)
 
 def accrue_ref_bonuses(worker_id: int, amount: float):
     data = user_data.get(worker_id, {})
@@ -1703,22 +1752,41 @@ async def cb_admin_accept(call: types.CallbackQuery):
         await call.answer()
         return
     
-    # Сохраняем решение в MongoDB
-    applications_col.update_one(
-        {"user_id": target_id},
-        {"$set": {
-            "status": "approved",
-            "admin_decided_by": admin_id,
-            "decided_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }},
-        upsert=True
-    )
-    
-    if target_id in user_data:
+    # Сначала гарантированно сохраняем доступ в users, и только потом закрываем заявку.
+    # Так approved-заявка больше не может остаться без активного профиля.
+    try:
+        if target_id not in user_data:
+            known = known_users_col.find_one({'user_id': target_id}) or {}
+            init_user(
+                target_id,
+                known.get('first_name') or f'ID: {target_id}',
+                known.get('username'),
+            )
+        joined_at = time.time()
+        result = users_col.update_one(
+            {'user_id': target_id},
+            {'$set': {'status_approved': True, 'joined_at': joined_at}},
+            upsert=False,
+        )
+        if result.matched_count != 1:
+            raise RuntimeError(f'Profile {target_id} was not saved')
         user_data[target_id]['status_approved'] = True
-        user_data[target_id]['joined_at'] = time.time()
-        save_db()
-    
+        user_data[target_id]['joined_at'] = joined_at
+
+        applications_col.update_one(
+            {'user_id': target_id},
+            {'$set': {
+                'status': 'approved',
+                'admin_decided_by': admin_id,
+                'decided_at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            }},
+            upsert=True,
+        )
+    except Exception:
+        logging.exception('Не удалось одобрить заявку пользователя %s', target_id)
+        await call.answer('База временно недоступна. Данные не изменены, повторите позже.', show_alert=True)
+        return
+
     applications.pop(target_id, None)
     await call.message.edit_text(f"✅ Заявка {target_id} одобрена.")
     await bot.send_message(target_id, "🎉 Ваша заявка одобрена! Нажмите /start для входа.")
@@ -2170,7 +2238,7 @@ async def fsm_base_profits(message: types.Message, state: FSMContext):
     try:
         val = int(message.text)
         global_settings['base_profits'] = val
-        save_db()
+        save_db(user_ids=[], include_settings=True)
         await state.clear()
         await message.answer(f"✅ Базовые профиты изменены на: <b>{val}</b>", parse_mode="HTML")
     except ValueError:
@@ -2182,7 +2250,7 @@ async def fsm_base_cash(message: types.Message, state: FSMContext):
     try:
         val = float(message.text)
         global_settings['base_cash'] = val
-        save_db()
+        save_db(user_ids=[], include_settings=True)
         await state.clear()
         await message.answer(f"✅ Базовая касса изменена на: <b>{val:,.0f} $</b>", parse_mode="HTML")
     except ValueError:
@@ -2205,7 +2273,7 @@ async def fsm_cash(message: types.Message, state: FSMContext):
             # Начисляем реферальные бонусы
             accrue_ref_bonuses(target_id, amount)
         user_data[target_id]['locks'] = int(user_data[target_id]['cash'] // 500)
-        save_db()
+        save_db(user_ids=[target_id], include_settings=False)
         await state.clear()
         builder = InlineKeyboardBuilder()
         builder.row(types.InlineKeyboardButton(text='👤 Вернуться в карточку', callback_data=f"adm_usr_{target_id}"))
@@ -2225,7 +2293,7 @@ async def fsm_lock(message: types.Message, state: FSMContext):
     try:
         val = int(message.text)
         user_data[target_id]['locks'] = val
-        save_db()
+        save_db(user_ids=[target_id], include_settings=False)
         await state.clear()
         builder = InlineKeyboardBuilder()
         builder.row(types.InlineKeyboardButton(text='👤 Вернуться в карточку', callback_data=f"adm_usr_{target_id}"))
@@ -2244,7 +2312,7 @@ async def fsm_ref(message: types.Message, state: FSMContext):
         parts = message.text.split()
         user_data[target_id]['ref_count_l1'] = int(parts[0])
         user_data[target_id]['ref_money_l1']  = float(parts[1])
-        save_db()
+        save_db(user_ids=[target_id], include_settings=False)
         await state.clear()
         builder = InlineKeyboardBuilder()
         builder.row(types.InlineKeyboardButton(text='👤 Вернуться в карточку', callback_data=f"adm_usr_{target_id}"))

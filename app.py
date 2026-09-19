@@ -17,15 +17,24 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017/tg_bot_database").strip()
+MONGO_URL = (os.getenv("MONGO_URL") or "").strip()
+MONGO_DB_NAME = "tg_bot_database"
+if not MONGO_URL:
+    raise RuntimeError("MONGO_URL is required; Mini App must use the production bot database")
 MINI_APP_AUTH_TTL = int(os.getenv("MINI_APP_AUTH_TTL", "86400"))
 
 if MONGO_URL and "${{" in MONGO_URL:
     MONGO_URL = MONGO_URL.split("}")[-1]
 
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path="")
-mongo = pymongo.MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
-db = mongo["tg_bot_database"]
+mongo = pymongo.MongoClient(
+    MONGO_URL,
+    serverSelectionTimeoutMS=10000,
+    connectTimeoutMS=10000,
+    socketTimeoutMS=20000,
+    retryWrites=True,
+)
+db = mongo[MONGO_DB_NAME]
 users_col = db["users"]
 
 RANKS_CONFIG = {
