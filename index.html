@@ -3,64 +3,114 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#0b0c10">
-    <title>LK TEAM</title>
+    <meta name="theme-color" content="#090806">
+    <meta name="color-scheme" content="dark">
+    <title>LK TEAM — Private Club</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-    <div class="ambient ambient-one"></div>
-    <div class="ambient ambient-two"></div>
+    <div class="scene" aria-hidden="true">
+        <div class="scene-glow scene-glow-one"></div>
+        <div class="scene-glow scene-glow-two"></div>
+        <div class="scene-grid"></div>
+        <div class="scene-noise"></div>
+    </div>
 
     <div class="app-shell">
         <header class="topbar">
             <div class="brand">
-                <div class="brand-mark" aria-hidden="true">LK</div>
-                <div>
-                    <span class="eyebrow">WORKSPACE</span>
+                <div class="brand-mark" aria-hidden="true"><span>LK</span></div>
+                <div class="brand-copy">
+                    <span class="eyebrow">PRIVATE COMMUNITY</span>
                     <strong>LK TEAM</strong>
                 </div>
             </div>
-            <button class="icon-button" id="settingsBtn" aria-label="Настройки">
-                <svg viewBox="0 0 24 24"><path d="M12 15.4a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8Z"/><path d="M19.4 13.5c.1-1 .1-2 0-3l1.8-1.4-2-3.4-2.2.9c-.8-.6-1.7-1.1-2.6-1.5L14 2.8h-4l-.4 2.3c-.9.4-1.8.9-2.6 1.5l-2.2-.9-2 3.4 1.8 1.4c-.1 1-.1 2 0 3l-1.8 1.4 2 3.4 2.2-.9c.8.6 1.7 1.1 2.6 1.5l.4 2.3h4l.4-2.3c.9-.4 1.8-.9 2.6-1.5l2.2.9 2-3.4-1.8-1.4Z"/></svg>
-            </button>
+            <div class="top-actions">
+                <span class="online-badge"><i></i><span>ONLINE</span></span>
+                <button class="icon-button" id="settingsBtn" aria-label="Настройки">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.3a3.3 3.3 0 1 0 0-6.6 3.3 3.3 0 0 0 0 6.6Z"/><path d="M19.1 13.4a7.7 7.7 0 0 0 0-2.8l1.7-1.3-1.9-3.2-2.1.8a8.2 8.2 0 0 0-2.4-1.4L14.1 3h-4.2l-.3 2.5A8.2 8.2 0 0 0 7.2 7l-2.1-.8-1.9 3.2 1.7 1.3a7.7 7.7 0 0 0 0 2.8l-1.7 1.3L5.1 18l2.1-.8a8.2 8.2 0 0 0 2.4 1.4l.3 2.5h4.2l.3-2.5a8.2 8.2 0 0 0 2.4-1.4l2.1.8 1.9-3.2-1.7-1.4Z"/></svg>
+                </button>
+            </div>
         </header>
 
         <main>
             <section class="screen active" data-screen="home">
-                <article class="hero-card">
-                    <div class="hero-copy">
-                        <span class="status-pill"><i></i> Профиль активен</span>
-                        <p class="hero-label">Текущий баланс</p>
-                        <h1 id="myBalance">$0.00</h1>
-                        <div class="hero-meta">
-                            <span id="userInfo">Загрузка…</span>
-                            <span class="dot-separator"></span>
-                            <span id="rankLabel">Студент</span>
+                <div class="welcome-row">
+                    <div>
+                        <span id="greetingText">Добро пожаловать</span>
+                        <h1 id="welcomeName">Участник</h1>
+                    </div>
+                    <div class="member-seal" aria-label="Верифицированный участник">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7.8 12.3 2.7 2.7 5.8-6"/><circle cx="12" cy="12" r="9"/></svg>
+                    </div>
+                </div>
+
+                <article class="wealth-card">
+                    <div class="wealth-shine" aria-hidden="true"></div>
+                    <div class="wealth-rings" aria-hidden="true"><i></i><i></i><i></i></div>
+                    <div class="wealth-content">
+                        <div class="wealth-topline">
+                            <span>ЛИЧНЫЙ КАПИТАЛ</span>
+                            <span class="live-pill"><i></i> LIVE</span>
+                        </div>
+                        <p class="wealth-balance" id="myBalance">$0</p>
+                        <div class="wealth-footer">
+                            <div><small>PRIVATE TAG</small><strong id="userInfo">Загрузка…</strong></div>
+                            <div><small>STATUS</small><strong id="rankLabel">Студент</strong></div>
                         </div>
                     </div>
-                    <div class="hero-orbit" aria-hidden="true"><span></span></div>
+                    <div class="wealth-medallion" aria-hidden="true">
+                        <div class="medallion-edge"></div>
+                        <span>LK</span>
+                        <small>MMXXVI</small>
+                    </div>
                 </article>
 
                 <div class="metric-grid">
                     <article class="metric-card">
-                        <div class="metric-icon violet">
-                            <svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+                        <div class="metric-top">
+                            <span class="metric-icon">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+                            </span>
+                            <span class="metric-trend">TOTAL</span>
                         </div>
-                        <span>Локи</span>
                         <strong id="lockCount">0</strong>
+                        <span>Закрытые локи</span>
                     </article>
                     <article class="metric-card">
-                        <div class="metric-icon mint">
-                            <svg viewBox="0 0 24 24"><path d="M12 3v18M17 7.5c0-1.7-2.2-3-5-3s-5 1.3-5 3 2.2 3 5 3 5 1.3 5 3-2.2 3-5 3-5-1.3-5-3"/></svg>
+                        <div class="metric-top">
+                            <span class="metric-icon">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16 10 11l3 3 6-7"/><path d="M14 7h5v5"/></svg>
+                            </span>
+                            <span class="metric-trend">GROWTH</span>
                         </div>
-                        <span>Профиты</span>
                         <strong id="profitCount">0</strong>
+                        <span>Успешные профиты</span>
+                    </article>
+                    <article class="metric-card metric-card-status">
+                        <div class="metric-top">
+                            <span class="metric-icon">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5c0 4.6-2.9 8-7 10-4.1-2-7-5.4-7-10V6l7-3Z"/><path d="m9 12 2 2 4-5"/></svg>
+                            </span>
+                            <span class="metric-trend">VERIFIED</span>
+                        </div>
+                        <strong class="status-value">100%</strong>
+                        <span>Статус доверия</span>
                     </article>
                 </div>
 
+                <article class="club-note">
+                    <div class="club-note-mark">L</div>
+                    <div><span>LK INNER CIRCLE</span><strong>Результат создаёт репутацию.</strong></div>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+                </article>
+
                 <div class="section-heading">
-                    <div><span class="eyebrow">АКТИВНОСТЬ</span><h2>Последние локи</h2></div>
+                    <div><span class="eyebrow">ACTIVITY DESK</span><h2>Последние локи</h2></div>
                     <span class="count-badge" id="lockHistoryCount">0</span>
                 </div>
                 <div class="timeline" id="lockHistory"><div class="empty-state">Пока нет записей</div></div>
@@ -68,34 +118,63 @@
 
             <section class="screen" data-screen="profits">
                 <div class="page-title">
-                    <span class="eyebrow">ФИНАНСЫ</span>
+                    <span class="eyebrow">FINANCIAL OFFICE</span>
                     <h1>Профиты</h1>
-                    <p>Ваш результат и доходы команды</p>
+                    <p>Личная динамика и структура дохода</p>
                 </div>
 
                 <article class="summary-card">
-                    <span>Всего заработано</span>
-                    <strong id="earnedTotal">$0.00</strong>
-                    <div class="summary-line"><span></span></div>
+                    <div class="summary-copy">
+                        <span>ВСЕГО ЗАРАБОТАНО</span>
+                        <strong id="earnedTotal">$0</strong>
+                        <small><i></i> Данные обновляются автоматически</small>
+                    </div>
+                    <div class="chart-shell" aria-hidden="true">
+                        <svg viewBox="0 0 280 100" preserveAspectRatio="none">
+                            <defs>
+                                <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stop-color="#e5bd72" stop-opacity=".32"/>
+                                    <stop offset="100%" stop-color="#e5bd72" stop-opacity="0"/>
+                                </linearGradient>
+                            </defs>
+                            <path class="chart-area" d="M0 86 C28 76 39 78 61 67 S103 72 125 54 156 60 176 38 217 50 239 25 261 29 280 10 L280 100 L0 100Z"/>
+                            <path class="chart-line" d="M0 86 C28 76 39 78 61 67 S103 72 125 54 156 60 176 38 217 50 239 25 261 29 280 10"/>
+                        </svg>
+                    </div>
                 </article>
 
-                <div class="section-heading"><div><span class="eyebrow">ИСТОРИЯ</span><h2>Начисления</h2></div></div>
+                <div class="finance-facts">
+                    <div><span>Средний чек</span><strong id="profitAverage">$0</strong></div>
+                    <div><span>Лучший профит</span><strong id="profitBest">$0</strong></div>
+                    <div><span>Всего операций</span><strong id="profitOperations">0</strong></div>
+                </div>
+
+                <div class="section-heading"><div><span class="eyebrow">TRANSACTIONS</span><h2>Начисления</h2></div></div>
                 <div class="timeline" id="profitHistory"><div class="empty-state">Пока нет начислений</div></div>
 
-                <div class="section-heading"><div><span class="eyebrow">КОМАНДА</span><h2>Реферальная система</h2></div></div>
+                <div class="section-heading"><div><span class="eyebrow">PARTNER PROGRAM</span><h2>Реферальная система</h2></div></div>
                 <article class="ref-card">
-                    <div class="ref-row"><span><i>1</i> Первый уровень</span><strong><b id="refCount1">0</b> · $<b id="refMoney1">0</b></strong></div>
-                    <div class="ref-row"><span><i>2</i> Второй уровень</span><strong><b id="refCount2">0</b> · $<b id="refMoney2">0</b></strong></div>
-                    <div class="ref-row"><span><i>3</i> Третий уровень</span><strong><b id="refCount3">0</b> · $<b id="refMoney3">0</b></strong></div>
-                    <button class="primary-button" id="inviteBtn">Скопировать ссылку</button>
+                    <div class="ref-intro"><span>3 уровня партнёрства</span><strong>Расширяй свою команду</strong></div>
+                    <div class="ref-row"><span><i>01</i><b>Первый уровень</b></span><strong><b id="refCount1">0</b> чел. <em>$<b id="refMoney1">0</b></em></strong></div>
+                    <div class="ref-row"><span><i>02</i><b>Второй уровень</b></span><strong><b id="refCount2">0</b> чел. <em>$<b id="refMoney2">0</b></em></strong></div>
+                    <div class="ref-row"><span><i>03</i><b>Третий уровень</b></span><strong><b id="refCount3">0</b> чел. <em>$<b id="refMoney3">0</b></em></strong></div>
+                    <button class="primary-button" id="inviteBtn">
+                        <span>Скопировать приглашение</span>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12h8M13 9l3 3-3 3"/><rect x="3" y="4" width="18" height="16" rx="5"/></svg>
+                    </button>
                 </article>
             </section>
 
             <section class="screen" data-screen="rating">
-                <div class="page-title">
-                    <span class="eyebrow">LK TEAM</span>
-                    <h1>Рейтинг</h1>
-                    <p>Лучшие участники проекта</p>
+                <div class="rating-head">
+                    <div>
+                        <span class="eyebrow">HALL OF FAME</span>
+                        <h1>Рейтинг</h1>
+                        <p>Лидеры закрытого сообщества</p>
+                    </div>
+                    <div class="trophy-seal" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4H4v3a5 5 0 0 0 5 5m8-8h3v3a5 5 0 0 1-5 5M7 3h10v6a5 5 0 0 1-10 0V3Z"/></svg>
+                    </div>
                 </div>
                 <div class="segment-control" role="tablist">
                     <button class="active" data-rating="locks">Локи</button>
@@ -106,50 +185,78 @@
             </section>
 
             <section class="screen" data-screen="profile">
-                <div class="profile-head">
-                    <div class="avatar" id="profileAvatar">LK</div>
+                <article class="profile-hero">
+                    <div class="profile-hero-lines" aria-hidden="true"></div>
+                    <span class="profile-overline">MEMBER ID · <b id="profileMemberId">000000</b></span>
+                    <div class="avatar-wrap"><div class="avatar" id="profileAvatar">LK</div><i></i></div>
                     <h1 id="profileName">Профиль</h1>
                     <p id="profileUsername">@username</p>
                     <span class="rank-chip" id="profileRank">Студент</span>
-                </div>
-                <article class="profile-card">
-                    <div><span>В проекте</span><strong id="joinedAt">—</strong></div>
-                    <div><span>Место в рейтинге</span><strong id="topPlace">—</strong></div>
-                    <div><span>Статус</span><strong class="success">Активен</strong></div>
                 </article>
-                <button class="secondary-button" id="profileSettingsBtn">Настроить профиль</button>
+
+                <div class="profile-metrics">
+                    <div><strong id="profileProfitCount">0</strong><span>Профитов</span></div>
+                    <i></i>
+                    <div><strong id="profileLockCount">0</strong><span>Локов</span></div>
+                    <i></i>
+                    <div><strong id="topPlace">—</strong><span>Место</span></div>
+                </div>
+
+                <article class="profile-card">
+                    <div><span>Состоит в проекте</span><strong id="joinedAt">—</strong></div>
+                    <div><span>Private tag</span><strong id="profileTag">—</strong></div>
+                    <div><span>Статус аккаунта</span><strong class="success"><i></i> Активен</strong></div>
+                </article>
+                <button class="secondary-button" id="profileSettingsBtn">
+                    <span>Настроить профиль</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+                </button>
             </section>
         </main>
 
         <nav class="bottom-nav" aria-label="Навигация">
             <span class="nav-indicator"></span>
-            <button class="active" data-target="home"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10Z"/></svg><span>Главная</span></button>
-            <button data-target="profits"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m6 14v-7m5 7V3"/></svg><span>Профиты</span></button>
-            <button data-target="rating"><svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4H4v3a5 5 0 0 0 5 5m8-8h3v3a5 5 0 0 1-5 5M7 3h10v6a5 5 0 0 1-10 0V3Z"/></svg><span>Топ</span></button>
-            <button data-target="profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Профиль</span></button>
+            <button class="active" data-target="home" aria-label="Главная"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10Z"/></svg><span>Главная</span></button>
+            <button data-target="profits" aria-label="Профиты"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m6 14v-7m5 7V3"/></svg><span>Профиты</span></button>
+            <button data-target="rating" aria-label="Рейтинг"><svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4H4v3a5 5 0 0 0 5 5m8-8h3v3a5 5 0 0 1-5 5M7 3h10v6a5 5 0 0 1-10 0V3Z"/></svg><span>Топ</span></button>
+            <button data-target="profile" aria-label="Профиль"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Профиль</span></button>
         </nav>
     </div>
 
     <div class="sheet-overlay" id="settingsOverlay" aria-hidden="true">
         <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
             <div class="sheet-handle"></div>
-            <div class="sheet-header"><div><span class="eyebrow">ПРОФИЛЬ</span><h2 id="settingsTitle">Настройки</h2></div><button class="close-button" id="settingsCloseBtn">×</button></div>
-            <label class="field"><span>Отображаемый тег</span><input id="tagInput" maxlength="20" autocomplete="off" placeholder="Ваш тег"></label>
-            <button class="primary-button" id="tagSaveBtn">Сохранить тег</button>
-            <label class="field"><span>Ранг</span><select id="rankSelect">
-                <option value="Студент" data-price="0">Студент</option>
-                <option value="Чемпион" data-price="1000">Чемпион · $1 000</option>
-                <option value="Волк с Уолл-Стрит" data-price="3000">Волк с Уолл-Стрит · $3 000</option>
-                <option value="Легенда" data-price="5000">Легенда · $5 000</option>
-                <option value="Босс Верховного стола" data-price="10000">Босс Верховного стола · $10 000</option>
-            </select></label>
+            <div class="sheet-header">
+                <div><span class="eyebrow">PRIVATE PROFILE</span><h2 id="settingsTitle">Настройки</h2></div>
+                <button class="close-button" id="settingsCloseBtn" aria-label="Закрыть">×</button>
+            </div>
+            <label class="field">
+                <span><b>Отображаемый тег</b><small><i id="tagCount">0</i>/20</small></span>
+                <input id="tagInput" maxlength="20" autocomplete="off" placeholder="Ваш тег">
+            </label>
+            <button class="primary-button" id="tagSaveBtn"><span>Сохранить тег</span></button>
+            <div class="sheet-divider"><span>Статус участника</span></div>
+            <label class="field">
+                <span><b>Ранг</b></span>
+                <select id="rankSelect">
+                    <option value="Студент" data-price="0">Студент</option>
+                    <option value="Чемпион" data-price="1000">Чемпион · $1 000</option>
+                    <option value="Волк с Уолл-Стрит" data-price="3000">Волк с Уолл-Стрит · $3 000</option>
+                    <option value="Легенда" data-price="5000">Легенда · $5 000</option>
+                    <option value="Босс Верховного стола" data-price="10000">Босс Верховного стола · $10 000</option>
+                </select>
+            </label>
             <p class="field-hint" id="rankHint"></p>
-            <button class="secondary-button" id="rankSaveBtn">Применить ранг</button>
+            <button class="secondary-button" id="rankSaveBtn"><span>Применить ранг</span></button>
         </section>
     </div>
 
-    <div class="loader active" id="loader"><div class="loader-mark">LK</div><div class="loader-line"><span></span></div></div>
-    <div class="toast" id="toast" role="status"></div>
+    <div class="loader active" id="loader">
+        <div class="loader-emblem"><span>LK</span><i></i></div>
+        <strong>PRIVATE COMMUNITY</strong>
+        <div class="loader-line"><span></span></div>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="script.js"></script>
 </body>
 </html>
