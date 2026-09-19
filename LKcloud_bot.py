@@ -5,6 +5,7 @@ import json
 import time
 import datetime
 import html
+import copy
 from PIL import Image, ImageDraw, ImageFont
 import io
 import pymongo  # Добавили импорт pymongo
@@ -105,6 +106,7 @@ admin_actions_col = db["admin_actions"]
 
 try:
     users_col.create_index('user_id', unique=True)
+    users_col.create_index('username_lower', sparse=True)
     known_users_col.create_index('user_id', unique=True)
     known_users_col.create_index('username_lower')
     admin_actions_col.create_index([('chat_id', 1), ('created_at', -1)])
@@ -163,41 +165,53 @@ def load_db():
         return {}
 
 import concurrent.futures
-_db_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="dbsave")
+# Одна очередь сохраняет снимки строго по порядку: старые записи больше не могут
+# завершиться после новых и вернуть пользователю устаревшие данные.
+_db_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="dbsave")
 
-def _save_db_sync():
-    """Сохраняет текущие настройки и данные всех пользователей из памяти в MongoDB.
-    ВАЖНО: сохраняет ВСЕХ пользователей на каждый вызов (порционно, по одному update_one).
-    Это может быть медленно при большом числе юзеров — сам save_db() запускает эту функцию
-    в отдельном потоке, чтобы не блокировать бота, пока идёт запись."""
+def _save_db_sync(settings_payload, users_payload):
+    """Пишет один согласованный снимок в MongoDB одним bulk-запросом."""
     try:
-        # 1. Сохраняем глобальные настройки
-        settings_payload = dict(global_settings)
-        settings_col.update_one(
-            {"type": "global_settings"},
-            {"$set": settings_payload},
-            upsert=True
-        )
-        
-        # 2. Сохраняем пользователей порционно
-        for k, v in user_data.items():
-            users_col.update_one(
-                {"user_id": int(k)},
-                {"$set": v},
+        if settings_payload is not None:
+            settings_col.update_one(
+                {"type": "global_settings"},
+                {"$set": settings_payload},
                 upsert=True
             )
+
+        if users_payload:
+            operations = [
+                pymongo.UpdateOne(
+                    {"user_id": int(user_id)},
+                    {"$set": data},
+                    upsert=True
+                )
+                for user_id, data in users_payload.items()
+            ]
+            users_col.bulk_write(operations, ordered=False)
         logging.info("✅ База данных успешно синхронизирована с MongoDB.")
     except Exception as e:
         logging.error(f"⚠️ Ошибка при сохранении базы данных в MongoDB: {e}")
 
-def save_db():
-    """Неблокирующая обёртка: реальная запись в MongoDB уходит в фоновый поток,
-    чтобы бот сразу же мог ответить пользователю, не дожидаясь записи в базу."""
-    _db_executor.submit(_save_db_sync)
+def save_db(user_ids=None, include_settings=True):
+    """Сохраняет неизменяемый снимок без блокировки event loop.
+
+    user_ids=None оставлен для старых массовых операций, но обычные изменения
+    пользователя передают конкретный ID и больше не перезаписывают всю базу.
+    """
+    settings_payload = copy.deepcopy(global_settings) if include_settings else None
+    ids = list(user_data.keys()) if user_ids is None else list(dict.fromkeys(int(uid) for uid in user_ids))
+    users_payload = {}
+    for uid in ids:
+        data = user_data.get(uid)
+        if isinstance(data, dict):
+            users_payload[int(uid)] = copy.deepcopy(data)
+    _db_executor.submit(_save_db_sync, settings_payload, users_payload)
 
 user_data = load_db()
 applications = {}
 chat_message_log = {}
+_known_user_cache = {}
 
 # =========================================================
 # ФУНКЦИИ ДЛЯ РАБОТЫ С ЧЕРНЫМ СПИСКОМ
@@ -294,13 +308,89 @@ async def remember_user(user: types.User, chat_id: int | None = None):
         'is_bot': user.is_bot,
         'updated_at': datetime.datetime.now(datetime.timezone.utc),
     }
+    normalized_username = payload['username_lower']
+    if user.id in user_data:
+        cached = user_data[user.id]
+        if cached.get('username_lower') != normalized_username:
+            cached['username'] = user.username
+            cached['username_lower'] = normalized_username
+            save_db(user_ids=[user.id], include_settings=False)
+
+    cache_key = (user.id, chat_id)
+    signature = (user.username, user.first_name, user.last_name, user.is_bot)
+    if _known_user_cache.get(cache_key) == signature:
+        return
+
     update = {'$set': payload}
     if chat_id is not None:
         update['$addToSet'] = {'chat_ids': chat_id}
     try:
         await asyncio.to_thread(known_users_col.update_one, {'user_id': user.id}, update, upsert=True)
+        _known_user_cache[cache_key] = signature
     except Exception as e:
         logging.warning('Не удалось обновить кэш пользователя %s: %s', user.id, e)
+
+
+async def resolve_worker_id(username: str):
+    """Находит воркера локально или одним индексированным запросом вместо N Telegram API вызовов."""
+    normalized = (username or '').lstrip('@').strip().lower()
+    if not normalized:
+        return None
+
+    for uid, data in user_data.items():
+        stored = data.get('username_lower')
+        if not stored and data.get('username'):
+            stored = str(data['username']).lower()
+        if stored == normalized:
+            return int(uid)
+
+    try:
+        record = await asyncio.to_thread(
+            known_users_col.find_one,
+            {'username_lower': normalized},
+            {'user_id': 1, 'username': 1},
+        )
+        if record:
+            uid = int(record['user_id'])
+            if uid in user_data:
+                user_data[uid]['username'] = record.get('username') or normalized
+                user_data[uid]['username_lower'] = normalized
+                return uid
+
+        record = await asyncio.to_thread(
+            users_col.find_one,
+            {'username_lower': normalized},
+            {'user_id': 1},
+        )
+        if record and int(record['user_id']) in user_data:
+            return int(record['user_id'])
+    except Exception as e:
+        logging.warning('Не удалось найти @%s в кэше пользователей: %s', normalized, e)
+    return None
+
+
+async def get_worker_card_identity(user_id: int, username_fallback: str):
+    """Берёт тег и ранг прямо из MongoDB, чтобы карточка не использовала устаревший кэш."""
+    data = user_data.get(user_id, {})
+    fresh = None
+    try:
+        fresh = await asyncio.to_thread(
+            users_col.find_one,
+            {'user_id': int(user_id)},
+            {'tag': 1, 'rank': 1},
+        )
+    except Exception as e:
+        logging.warning('Не удалось обновить тег/ранг пользователя %s: %s', user_id, e)
+
+    if fresh:
+        for field in ('tag', 'rank'):
+            value = fresh.get(field)
+            if value not in (None, ''):
+                data[field] = value
+
+    tag = str(data.get('tag') or username_fallback).strip() or username_fallback
+    rank = str(data.get('rank') or 'Студент').strip() or 'Студент'
+    return rank, tag
 
 
 def init_user(chat_id: int, first_name: str, username: str | None = None):
@@ -319,6 +409,7 @@ def init_user(chat_id: int, first_name: str, username: str | None = None):
         user_data[chat_id] = {
             'name': first_name,
             'username': username,
+            'username_lower': username.lower() if username else None,
             'cash': 0.0,
             'profits': 0,
             'profit_history': [],
@@ -336,11 +427,13 @@ def init_user(chat_id: int, first_name: str, username: str | None = None):
             'ref_count_l2': 0, 'ref_money_l2': 0.0,
             'ref_count_l3': 0, 'ref_money_l3': 0.0,
         }
-        save_db()
+        save_db(user_ids=[chat_id], include_settings=False)
     else:
         user_data[chat_id]['name'] = first_name
-        if username:
+        if username and user_data[chat_id].get('username') != username:
             user_data[chat_id]['username'] = username
+            user_data[chat_id]['username_lower'] = username.lower()
+            save_db(user_ids=[chat_id], include_settings=False)
     return user_data[chat_id]
 
 def register_referral(new_user_id: int, referrer_id: int):
@@ -377,7 +470,7 @@ def accrue_ref_bonuses(worker_id: int, amount: float):
         percent = get_ref_percent(l1)
         bonus = round(amount * percent, 2)
         user_data[l1]['ref_money_l1'] = round(user_data[l1].get('ref_money_l1', 0.0) + bonus, 2)
-    save_db()
+        save_db(user_ids=[l1], include_settings=False)
 
 # =========================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -1175,7 +1268,7 @@ async def cmd_unban(message: types.Message):
 LOCK_CHAT_ID = -1004485193806
 PROFIT_CHAT_ID = -1004409257430
 
-async def generate_profit_card(rank: str, worker_tag: str, service: str, amount: float, share: float) -> io.BytesIO:
+def _generate_profit_card_sync(rank: str, worker_tag: str, service: str, amount: float, share: float) -> io.BytesIO:
     template_path = os.path.join(BASE_DIR, 'images', 'profit_card.jpg')
     img = Image.open(template_path).convert("RGBA")
     draw = ImageDraw.Draw(img)
@@ -1218,6 +1311,10 @@ async def generate_profit_card(rank: str, worker_tag: str, service: str, amount:
     return output
 
 
+async def generate_profit_card(rank: str, worker_tag: str, service: str, amount: float, share: float) -> io.BytesIO:
+    return await asyncio.to_thread(_generate_profit_card_sync, rank, worker_tag, service, amount, share)
+
+
 @dp.message(Command("botban"))
 async def cmd_botban(message: types.Message):
     """Команда для админов: /botban @username или /botban ID - забанить пользователя в боте"""
@@ -1243,21 +1340,8 @@ async def cmd_botban(message: types.Message):
     try:
         target_id = int(user_arg)
     except ValueError:
-        # Это username, ищем в базе
-        username_lower = user_arg.lower()
-        for uid in list(user_data.keys()):
-            user = user_data.get(uid, {})
-            if isinstance(user, dict):
-                continue
-            # Пытаемся получить username через Telegram API
-            try:
-                member = await bot.get_chat_member(PROFIT_CHAT_ID, uid)
-                if member.user.username and member.user.username.lower() == username_lower:
-                    target_id = uid
-                    target_username = member.user.username
-                    break
-            except:
-                continue
+        target_id = await resolve_worker_id(user_arg)
+        target_username = user_arg if target_id is not None else None
     
     if target_id is None:
         await message.reply(f"❌ Пользователь не найден: {user_arg}")
@@ -1299,15 +1383,7 @@ async def cmd_deal(message: types.Message):
         percentage = 0.6  # 60%
         percentage_text = "60%"
     
-    target_id = None
-    for uid in list(user_data.keys()):
-        try:
-            member = await bot.get_chat_member(PROFIT_CHAT_ID, uid)
-            if member.user.username and member.user.username.lower() == username_arg:
-                target_id = uid
-                break
-        except Exception:
-            continue
+    target_id = await resolve_worker_id(username_arg)
     if target_id is None:
         await message.reply(f"❌ Пользователь @{username_arg} не найден в базе.")
         return
@@ -1322,9 +1398,8 @@ async def cmd_deal(message: types.Message):
     user_data[target_id]['profit_history'].append({'amount': amount, 'share': share, 'date': date_str, 'deal_type': deal_type})
     accrue_ref_bonuses(target_id, share)
 
-    save_db()
-    rank    = user_data[target_id].get('rank', 'Студент')
-    tag     = user_data[target_id].get('tag', username_arg)
+    save_db(user_ids=[target_id], include_settings=False)
+    rank, tag = await get_worker_card_identity(target_id, username_arg)
     service = 'Прямик' if deal_type == '+' else 'iCloud'
     try:
         card = await generate_profit_card(rank, tag, service, amount, share)
@@ -1380,15 +1455,7 @@ async def cmd_profit(message: types.Message):
         percentage = 0.6  # 60%
         percentage_text = "60%"
     
-    target_id = None
-    for uid in list(user_data.keys()):
-        try:
-            member = await bot.get_chat_member(PROFIT_CHAT_ID, uid)
-            if member.user.username and member.user.username.lower() == username_arg:
-                target_id = uid
-                break
-        except Exception:
-            continue
+    target_id = await resolve_worker_id(username_arg)
     if target_id is None:
         await message.reply(f"❌ Пользователь @{username_arg} не найден в базе.")
         return
@@ -1403,9 +1470,8 @@ async def cmd_profit(message: types.Message):
     user_data[target_id]['profit_history'].append({'amount': amount, 'share': share, 'date': date_str, 'deal_type': deal_type})
     accrue_ref_bonuses(target_id, share)
 
-    save_db()
-    rank    = user_data[target_id].get('rank', 'Студент')
-    tag     = user_data[target_id].get('tag', username_arg)
+    save_db(user_ids=[target_id], include_settings=False)
+    rank, tag = await get_worker_card_identity(target_id, username_arg)
     service = 'Прямик' if deal_type == '+' else 'iCloud'
     try:
         card = await generate_profit_card(rank, tag, service, amount, share)
@@ -1442,17 +1508,8 @@ async def cmd_plus_lock(message: types.Message):
         return
     username_arg = parts[1].lstrip('@').lower()
     model_name = parts[2]
-    target_id = None
-    target_data = None
-    for uid in list(user_data.keys()):
-        try:
-            member = await bot.get_chat_member(LOCK_CHAT_ID, uid)
-            if member.user.username and member.user.username.lower() == username_arg:
-                target_id = uid
-                target_data = user_data[uid]
-                break
-        except Exception:
-            continue
+    target_id = await resolve_worker_id(username_arg)
+    target_data = user_data.get(target_id) if target_id is not None else None
     if target_id is None:
         await message.reply(f"❌ Пользователь @{username_arg} не найден в базе.")
         return
@@ -1461,7 +1518,7 @@ async def cmd_plus_lock(message: types.Message):
         target_data['lock_history'] = []
     date_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
     target_data['lock_history'].append({'model': model_name, 'date': date_str})
-    save_db()
+    save_db(user_ids=[target_id], include_settings=False)
     await message.reply(
         f"🔒 <b>Лок добавлен!</b>\n\n👤 Воркер: @{username_arg}\n📱 Модель: <b>{model_name}</b>\n"
         f"📅 Дата: {date_str}\n🔒 Всего локов: <b>{target_data['locks']}</b>", parse_mode="HTML"
@@ -2202,9 +2259,22 @@ async def fsm_tag(message: types.Message, state: FSMContext):
     if not tag or len(tag) > 20 or any(ord(char) < 32 for char in tag):
         await message.answer("⚠️ Тег должен содержать от 1 до 20 обычных символов.")
         return
-    if cid in user_data:
-        user_data[cid]['tag'] = tag
-        save_db()
+    if cid not in user_data:
+        await state.clear()
+        await message.answer("⚠️ Профиль не найден. Сначала нажмите /start.")
+        return
+    try:
+        await asyncio.to_thread(
+            users_col.update_one,
+            {'user_id': int(cid)},
+            {'$set': {'tag': tag}},
+            upsert=False,
+        )
+    except Exception as e:
+        logging.exception("Не удалось сохранить тег пользователя %s", cid)
+        await message.answer("⚠️ Не удалось сохранить тег. Попробуйте ещё раз.")
+        return
+    user_data[cid]['tag'] = tag
     await state.clear()
     builder = InlineKeyboardBuilder()
     builder.row(types.InlineKeyboardButton(text='  Назад', callback_data='menu_settings', icon_custom_emoji_id='5352759161945867747'))
