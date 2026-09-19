@@ -207,7 +207,7 @@ def update_me():
         if not update_fields:
             return api_error("Нет данных для обновления")
 
-        result = users_col.update_one({"user_id": g.user_id}, {"$set": update_fields})
+        result = users_col.update_many({"user_id": g.user_id}, {"$set": update_fields})
         if not result.matched_count:
             return api_error("Профиль не найден", 404)
         return jsonify({"success": True, "data": update_fields})
