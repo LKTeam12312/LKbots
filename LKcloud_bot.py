@@ -100,14 +100,42 @@ if not MONGO_URL:
 if "${{" in MONGO_URL:
     MONGO_URL = MONGO_URL.split("}")[-1].strip()
 
-client = pymongo.MongoClient(
-    MONGO_URL,
-    serverSelectionTimeoutMS=10000,
-    connectTimeoutMS=10000,
-    socketTimeoutMS=20000,
-    retryWrites=True,
-)
-client.admin.command("ping")
+MONGO_CONNECT_ATTEMPTS = 5
+
+
+def connect_to_mongo():
+    """Connect with bounded retries; never continue with an unavailable database."""
+    last_error = None
+    for attempt in range(1, MONGO_CONNECT_ATTEMPTS + 1):
+        candidate = None
+        try:
+            candidate = pymongo.MongoClient(
+                MONGO_URL,
+                serverSelectionTimeoutMS=10000,
+                connectTimeoutMS=10000,
+                socketTimeoutMS=20000,
+                retryWrites=True,
+            )
+            candidate.admin.command("ping")
+            logging.info("✅ MongoDB connection established on attempt %s", attempt)
+            return candidate
+        except Exception as exc:
+            last_error = exc
+            if candidate is not None:
+                candidate.close()
+            if attempt < MONGO_CONNECT_ATTEMPTS:
+                delay = min(2 ** (attempt - 1), 8)
+                logging.warning(
+                    "MongoDB unavailable (attempt %s/%s); retrying in %ss",
+                    attempt,
+                    MONGO_CONNECT_ATTEMPTS,
+                    delay,
+                )
+                time.sleep(delay)
+    raise RuntimeError("MongoDB is unavailable; refusing to start the bot") from last_error
+
+
+client = connect_to_mongo()
 db = client[MONGO_DB_NAME]
 users_col = db["users"]
 settings_col = db["settings"]
@@ -132,93 +160,137 @@ global_settings = {
 }
 
 def load_db():
-    """Загружает настройки и всех пользователей из MongoDB в оперативную память при старте."""
+    """Load production data with retries; an empty fallback is forbidden."""
     global global_settings
-    try:
-        # 1. Загружаем глобальные настройки
-        db_settings = settings_col.find_one({"type": "global_settings"})
-        if db_settings:
-            db_settings.pop("_id", None)
-            db_settings.pop("type", None)
-            global_settings.update(db_settings)
-            logging.info("✅ Глобальные настройки успешно загружены из MongoDB.")
-        
-        # 2. Загружаем пользователей
-        loaded_users = {}
-        for user in users_col.find():
-            user_id = int(user["user_id"])
-            user.pop("_id", None)
-            user.pop("user_id", None)
-            loaded_users[user_id] = user
-            
-        logging.info(f"✅ База данных загружена из MongoDB: {len(loaded_users)} пользователей.")
-        
-        # 3. Инициализируем новые коллекции (если не существуют)
+    last_error = None
+    for attempt in range(1, MONGO_CONNECT_ATTEMPTS + 1):
         try:
-            # Проверяем что новые коллекции есть
+            loaded_settings = copy.deepcopy(global_settings)
+            db_settings = settings_col.find_one({"type": "global_settings"})
+            if db_settings:
+                db_settings.pop("_id", None)
+                db_settings.pop("type", None)
+                loaded_settings.update(db_settings)
+
+            loaded_users = {}
+            for user in users_col.find():
+                user_id = int(user["user_id"])
+                user.pop("_id", None)
+                user.pop("user_id", None)
+                loaded_users[user_id] = user
+
             existing_collections = db.list_collection_names()
-            if "applications" not in existing_collections:
-                logging.info("📝 Коллекция 'applications' инициализирована (новая)")
-            else:
-                app_count = applications_col.count_documents({})
-                logging.info(f"📝 Коллекция 'applications': {app_count} заявок")
-            
-            if "blacklist" not in existing_collections:
-                logging.info("🚫 Коллекция 'blacklist' инициализирована (новая)")
-            else:
-                ban_count = blacklist_col.count_documents({})
-                logging.info(f"🚫 Коллекция 'blacklist': {ban_count} пользователей")
-        except Exception as e:
-            logging.warning(f"⚠️ Не удалось проверить новые коллекции: {e}")
-        
-        return loaded_users
-    except Exception as e:
-        logging.critical(f"🛑 Не удалось загрузить production-базу MongoDB: {e}")
-        raise RuntimeError("MongoDB load failed; refusing to start with empty user data") from e
+            app_count = applications_col.count_documents({}) if "applications" in existing_collections else 0
+            ban_count = blacklist_col.count_documents({}) if "blacklist" in existing_collections else 0
+            global_settings = loaded_settings
+            logging.info(
+                "✅ Production MongoDB loaded: %s users, %s applications, %s blacklisted",
+                len(loaded_users),
+                app_count,
+                ban_count,
+            )
+            return loaded_users
+        except Exception as exc:
+            last_error = exc
+            if attempt < MONGO_CONNECT_ATTEMPTS:
+                delay = min(2 ** (attempt - 1), 8)
+                logging.warning(
+                    "MongoDB load failed (attempt %s/%s); retrying in %ss: %s",
+                    attempt,
+                    MONGO_CONNECT_ATTEMPTS,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+
+    logging.critical("🛑 Production MongoDB could not be loaded after retries: %s", last_error)
+    raise RuntimeError("MongoDB load failed; refusing to start with empty user data") from last_error
 
 import concurrent.futures
 # Одна очередь сохраняет снимки строго по порядку: старые записи больше не могут
 # завершиться после новых и вернуть пользователю устаревшие данные.
 _db_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="dbsave")
 
-def _save_db_sync(settings_payload, users_payload):
-    """Пишет один согласованный снимок в MongoDB одним bulk-запросом."""
+def _execute_write(description, operation, attempts=3):
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            last_error = exc
+            if attempt < attempts:
+                delay = min(2 ** (attempt - 1), 4)
+                logging.warning(
+                    "%s failed (attempt %s/%s); retrying in %ss: %s",
+                    description,
+                    attempt,
+                    attempts,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+    raise RuntimeError(f"{description} failed after retries") from last_error
+
+
+def _save_db_sync(settings_payload, user_updates):
+    """Persist only explicit fields; never write a full stale user snapshot."""
     try:
-        if settings_payload is not None:
-            settings_col.update_one(
-                {"type": "global_settings"},
-                {"$set": settings_payload},
-                upsert=True
+        if settings_payload:
+            _execute_write(
+                "settings update",
+                lambda: settings_col.update_one(
+                    {"type": "global_settings"},
+                    {"$set": settings_payload},
+                    upsert=True,
+                ),
             )
 
-        if users_payload:
-            operations = [
-                pymongo.UpdateOne(
+        for user_id, fields in user_updates.items():
+            if not fields:
+                continue
+            result = _execute_write(
+                f"user {user_id} update",
+                lambda user_id=user_id, fields=fields: users_col.update_one(
                     {"user_id": int(user_id)},
-                    {"$set": data},
-                    upsert=True
-                )
-                for user_id, data in users_payload.items()
-            ]
-            users_col.bulk_write(operations, ordered=False)
-        logging.info("✅ База данных успешно синхронизирована с MongoDB.")
-    except Exception as e:
-        logging.error(f"⚠️ Ошибка при сохранении базы данных в MongoDB: {e}")
+                    {"$set": fields},
+                    upsert=False,
+                ),
+            )
+            if result.matched_count != 1:
+                raise RuntimeError(f"User {user_id} disappeared before save")
+        logging.info("✅ MongoDB fields saved: %s user(s)", len(user_updates))
+    except Exception:
+        logging.exception("⚠️ Failed to persist MongoDB changes")
 
-def save_db(user_ids=None, include_settings=True):
-    """Сохраняет неизменяемый снимок без блокировки event loop.
+def save_db(user_fields=None, settings_fields=None):
+    """Queue a deep-copied field-level update in strict order.
 
-    user_ids=None оставлен для старых массовых операций, но обычные изменения
-    пользователя передают конкретный ID и больше не перезаписывают всю базу.
+    user_fields maps user_id to an iterable of field names. Requiring explicit
+    names prevents bot cache snapshots from overwriting fresh Mini App edits.
     """
-    settings_payload = copy.deepcopy(global_settings) if include_settings else None
-    ids = list(user_data.keys()) if user_ids is None else list(dict.fromkeys(int(uid) for uid in user_ids))
-    users_payload = {}
-    for uid in ids:
-        data = user_data.get(uid)
-        if isinstance(data, dict):
-            users_payload[int(uid)] = copy.deepcopy(data)
-    _db_executor.submit(_save_db_sync, settings_payload, users_payload)
+    user_fields = user_fields or {}
+    settings_fields = set(settings_fields or ())
+    settings_payload = {
+        field: copy.deepcopy(global_settings[field])
+        for field in settings_fields
+        if field in global_settings
+    }
+    user_updates = {}
+    for raw_user_id, field_names in user_fields.items():
+        user_id = int(raw_user_id)
+        cached = user_data.get(user_id)
+        if not isinstance(cached, dict):
+            raise RuntimeError(f"Cannot save unknown user {user_id}")
+        payload = {
+            field: copy.deepcopy(cached[field])
+            for field in set(field_names)
+            if field in cached
+        }
+        if payload:
+            user_updates[user_id] = payload
+
+    if settings_payload or user_updates:
+        _db_executor.submit(_save_db_sync, settings_payload, user_updates)
 
 user_data = load_db()
 applications = {}
@@ -299,7 +371,7 @@ for uid, info in user_data.items():
         info['rank'] = rank_migration[old_rank]
         migrated_user_ids.append(uid)
 if migrated_user_ids:
-    save_db(user_ids=migrated_user_ids, include_settings=False)
+    save_db(user_fields={uid: {"rank"} for uid in migrated_user_ids})
 
 # =========================================================
 # РЕФЕРАЛЬНЫЕ ПРОЦЕНТЫ
@@ -329,7 +401,7 @@ async def remember_user(user: types.User, chat_id: int | None = None):
         if cached.get('username_lower') != normalized_username:
             cached['username'] = user.username
             cached['username_lower'] = normalized_username
-            save_db(user_ids=[user.id], include_settings=False)
+            save_db(user_fields={user.id: {"username", "username_lower"}})
 
     cache_key = (user.id, chat_id)
     signature = (user.username, user.first_name, user.last_name, user.is_bot)
@@ -508,9 +580,15 @@ def register_referral(new_user_id: int, referrer_id: int):
             data['referrer_l3'] = l3
             user_data[l3]['ref_count_l3'] += 1
 
-    affected_ids = {new_user_id, referrer_id}
-    affected_ids.update(uid for uid in (data.get('referrer_l2'), data.get('referrer_l3')) if uid in user_data)
-    save_db(user_ids=list(affected_ids), include_settings=False)
+    changed_fields = {
+        new_user_id: {"referrer_l1", "referrer_l2", "referrer_l3"},
+        referrer_id: {"ref_count_l1"},
+    }
+    if data.get("referrer_l2") in user_data:
+        changed_fields[data["referrer_l2"]] = {"ref_count_l2"}
+    if data.get("referrer_l3") in user_data:
+        changed_fields[data["referrer_l3"]] = {"ref_count_l3"}
+    save_db(user_fields=changed_fields)
 
 def accrue_ref_bonuses(worker_id: int, amount: float):
     data = user_data.get(worker_id, {})
@@ -519,7 +597,7 @@ def accrue_ref_bonuses(worker_id: int, amount: float):
         percent = get_ref_percent(l1)
         bonus = round(amount * percent, 2)
         user_data[l1]['ref_money_l1'] = round(user_data[l1].get('ref_money_l1', 0.0) + bonus, 2)
-        save_db(user_ids=[l1], include_settings=False)
+        save_db(user_fields={l1: {"ref_money_l1"}})
 
 # =========================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -1447,7 +1525,7 @@ async def cmd_deal(message: types.Message):
     user_data[target_id]['profit_history'].append({'amount': amount, 'share': share, 'date': date_str, 'deal_type': deal_type})
     accrue_ref_bonuses(target_id, share)
 
-    save_db(user_ids=[target_id], include_settings=False)
+    save_db(user_fields={target_id: {"cash", "profits", "profit_history"}})
     rank, tag = await get_worker_card_identity(target_id, username_arg)
     service = 'Прямик' if deal_type == '+' else 'iCloud'
     try:
@@ -1519,7 +1597,7 @@ async def cmd_profit(message: types.Message):
     user_data[target_id]['profit_history'].append({'amount': amount, 'share': share, 'date': date_str, 'deal_type': deal_type})
     accrue_ref_bonuses(target_id, share)
 
-    save_db(user_ids=[target_id], include_settings=False)
+    save_db(user_fields={target_id: {"cash", "profits", "profit_history"}})
     rank, tag = await get_worker_card_identity(target_id, username_arg)
     service = 'Прямик' if deal_type == '+' else 'iCloud'
     try:
@@ -1567,7 +1645,7 @@ async def cmd_plus_lock(message: types.Message):
         target_data['lock_history'] = []
     date_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
     target_data['lock_history'].append({'model': model_name, 'date': date_str})
-    save_db(user_ids=[target_id], include_settings=False)
+    save_db(user_fields={target_id: {"locks", "lock_history"}})
     await message.reply(
         f"🔒 <b>Лок добавлен!</b>\n\n👤 Воркер: @{username_arg}\n📱 Модель: <b>{model_name}</b>\n"
         f"📅 Дата: {date_str}\n🔒 Всего локов: <b>{target_data['locks']}</b>", parse_mode="HTML"
@@ -2238,7 +2316,7 @@ async def fsm_base_profits(message: types.Message, state: FSMContext):
     try:
         val = int(message.text)
         global_settings['base_profits'] = val
-        save_db(user_ids=[], include_settings=True)
+        save_db(settings_fields={"base_profits"})
         await state.clear()
         await message.answer(f"✅ Базовые профиты изменены на: <b>{val}</b>", parse_mode="HTML")
     except ValueError:
@@ -2250,7 +2328,7 @@ async def fsm_base_cash(message: types.Message, state: FSMContext):
     try:
         val = float(message.text)
         global_settings['base_cash'] = val
-        save_db(user_ids=[], include_settings=True)
+        save_db(settings_fields={"base_cash"})
         await state.clear()
         await message.answer(f"✅ Базовая касса изменена на: <b>{val:,.0f} $</b>", parse_mode="HTML")
     except ValueError:
@@ -2273,7 +2351,7 @@ async def fsm_cash(message: types.Message, state: FSMContext):
             # Начисляем реферальные бонусы
             accrue_ref_bonuses(target_id, amount)
         user_data[target_id]['locks'] = int(user_data[target_id]['cash'] // 500)
-        save_db(user_ids=[target_id], include_settings=False)
+        save_db(user_fields={target_id: {"cash", "profits", "profit_history", "locks"}})
         await state.clear()
         builder = InlineKeyboardBuilder()
         builder.row(types.InlineKeyboardButton(text='👤 Вернуться в карточку', callback_data=f"adm_usr_{target_id}"))
@@ -2293,7 +2371,7 @@ async def fsm_lock(message: types.Message, state: FSMContext):
     try:
         val = int(message.text)
         user_data[target_id]['locks'] = val
-        save_db(user_ids=[target_id], include_settings=False)
+        save_db(user_fields={target_id: {"locks"}})
         await state.clear()
         builder = InlineKeyboardBuilder()
         builder.row(types.InlineKeyboardButton(text='👤 Вернуться в карточку', callback_data=f"adm_usr_{target_id}"))
@@ -2312,7 +2390,7 @@ async def fsm_ref(message: types.Message, state: FSMContext):
         parts = message.text.split()
         user_data[target_id]['ref_count_l1'] = int(parts[0])
         user_data[target_id]['ref_money_l1']  = float(parts[1])
-        save_db(user_ids=[target_id], include_settings=False)
+        save_db(user_fields={target_id: {"ref_count_l1", "ref_money_l1"}})
         await state.clear()
         builder = InlineKeyboardBuilder()
         builder.row(types.InlineKeyboardButton(text='👤 Вернуться в карточку', callback_data=f"adm_usr_{target_id}"))
