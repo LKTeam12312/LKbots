@@ -1693,7 +1693,7 @@ button:disabled {
     }
 }
 
-.member-seal > span {
+.wealth-medallion .member-seal > span {
     position: relative;
-    top: -6px;
+    top: -14px !important;
 }
