@@ -250,7 +250,7 @@ def _save_db_sync(settings_payload, user_updates):
                 continue
             result = _execute_write(
                 f"user {user_id} update",
-                lambda user_id=user_id, fields=fields: users_col.update_one(
+                lambda user_id=user_id, fields=fields: users_col.update_many(
                     {"user_id": int(user_id)},
                     {"$set": fields},
                     upsert=False,
@@ -502,7 +502,7 @@ def init_user(chat_id: int, first_name: str, username: str | None = None):
             identity_update['username'] = username
             identity_update['username_lower'] = username.lower()
         if identity_update:
-            users_col.update_one({'user_id': int(chat_id)}, {'$set': identity_update}, upsert=False)
+            users_col.update_many({'user_id': int(chat_id)}, {'$set': identity_update}, upsert=False)
         return data
 
     # A historical approved application restores access, but never overwrites money,
@@ -1841,7 +1841,7 @@ async def cb_admin_accept(call: types.CallbackQuery):
                 known.get('username'),
             )
         joined_at = time.time()
-        result = users_col.update_one(
+        result = users_col.update_many(
             {'user_id': target_id},
             {'$set': {'status_approved': True, 'joined_at': joined_at}},
             upsert=False,
@@ -2411,7 +2411,7 @@ async def fsm_tag(message: types.Message, state: FSMContext):
         return
     try:
         await asyncio.to_thread(
-            users_col.update_one,
+            users_col.update_many,
             {'user_id': int(cid)},
             {'$set': {'tag': tag}},
             upsert=False,
