@@ -519,9 +519,6 @@ def init_user(chat_id: int, first_name: str, username: str | None = None):
         {'_id': 1},
     ) is not None
     defaults = {
-        'name': first_name,
-        'username': username,
-        'username_lower': username.lower() if username else None,
         'cash': 0.0,
         'profits': 0,
         'profit_history': [],
