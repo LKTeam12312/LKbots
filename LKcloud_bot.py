@@ -829,7 +829,12 @@ async def cmd_start(message: types.Message):
         except ValueError:
             pass
 
-    data = init_user(message.from_user.id, message.from_user.first_name, message.from_user.username)
+    try:
+        data = init_user(message.from_user.id, message.from_user.first_name, message.from_user.username)
+    except Exception:
+        logging.exception('Не удалось обработать /start пользователя %s', message.from_user.id)
+        await message.answer('⚠️ Не удалось открыть профиль. Попробуйте /start ещё раз чуть позже.')
+        return
     
     # Проверяем blacklist
     if data.get('blocked'):
