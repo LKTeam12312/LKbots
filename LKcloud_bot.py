@@ -147,6 +147,7 @@ blacklist_col = db["blacklist"]
 known_users_col = db["known_users"]
 admin_actions_col = db["admin_actions"]
 nedobonus_col = db["nedobonus"]
+nedobonus_test_col = db["nedobonus_test"]
 
 try:
     users_col.create_index('user_id', unique=True)
@@ -155,6 +156,7 @@ try:
     known_users_col.create_index('username_lower')
     admin_actions_col.create_index([('chat_id', 1), ('created_at', -1)])
     nedobonus_col.create_index([('kind', 1), ('event_id', 1)])
+    nedobonus_test_col.create_index([('kind', 1), ('event_id', 1)])
 except Exception as e:
     logging.warning('Не удалось создать индексы MongoDB: %s', e)
 
@@ -2434,11 +2436,18 @@ async def fsm_tag(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Тег изменен на: <b>{html.escape(tag)}</b>", reply_markup=builder.as_markup(), parse_mode="HTML")
     
 def nedobonus_prize_text(amounts):
-    lines = [f"{i + 1}. {amount:g} $" for i, amount in enumerate(amounts)]
+    lines = [f"{i + 1}. {nedobonus_prize_label(prize) or 'Без приза'}" for i, prize in enumerate(amounts)]
     return "🏆 <b>Призовой фонд Недобонуса</b>\n\n" + "\n".join(lines) + (
-        "\n\nНажмите на место и отправьте сумму. 0 скрывает место в объявлениях. "
+        "\n\nВыберите место, затем тип приза: Деньги или Текст. 0 $ скрывает место. "
         "При старте призы закрепляются за событием."
     )
+
+
+def nedobonus_prize_label(prize):
+    prize = nedobonus.normalize_prize(prize)
+    if prize["type"] == "text":
+        return html.escape(prize["value"])
+    return f"{prize['value']:g} $" if prize["value"] > 0 else ""
 
 
 def nedobonus_prize_keyboard():
@@ -2472,26 +2481,71 @@ async def cb_nedobonus_prize_place(call: types.CallbackQuery, state: FSMContext)
     if not 1 <= place <= 10:
         await call.answer("Неверное место", show_alert=True)
         return
-    await state.set_state(AdminStates.wait_nedobonus_prize)
-    await state.update_data(nedobonus_place=place)
-    await call.message.answer(f"Введите приз для {place} места в $ (0 — без приза).")
+    await state.clear()
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(text="💰 Деньги", callback_data=f"nedobonus_set_money_{place}"),
+        types.InlineKeyboardButton(text="📝 Текст", callback_data=f"nedobonus_set_text_{place}"),
+    )
+    builder.row(types.InlineKeyboardButton(text="Отмена", callback_data="nedobonus_cancel_prize"))
+    await call.message.edit_text(f"Приз за {place} место: выберите тип.", reply_markup=builder.as_markup())
     await call.answer()
+
+
+@dp.callback_query(F.data.startswith("nedobonus_set_"))
+async def cb_nedobonus_prize_type(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    _, _, kind, raw_place = call.data.split("_")
+    place = int(raw_place)
+    if kind not in {"money", "text"} or not 1 <= place <= 10:
+        await call.answer("Неверный тип приза", show_alert=True)
+        return
+    await state.set_state(AdminStates.wait_nedobonus_prize)
+    await state.update_data(nedobonus_place=place, nedobonus_kind=kind)
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="❌ Отменить ввод", callback_data="nedobonus_cancel_prize"))
+    prompt = (f"Введите сумму в $ для {place} места (0 — без приза)." if kind == "money"
+              else f"Введите название приза для {place} места (до 100 символов).")
+    await call.message.edit_text(prompt, reply_markup=builder.as_markup())
+    await call.answer()
+
+
+@dp.callback_query(F.data == "nedobonus_cancel_prize")
+async def cb_nedobonus_cancel_prize(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    await state.clear()
+    amounts = await asyncio.to_thread(nedobonus.prizes, nedobonus_col)
+    await call.message.edit_text(nedobonus_prize_text(amounts),
+                                 reply_markup=nedobonus_prize_keyboard(), parse_mode="HTML")
+    await call.answer("Ввод отменён")
 
 
 @dp.message(AdminStates.wait_nedobonus_prize)
 async def fsm_nedobonus_prize(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMIN_IDS:
         return
+    data_state = await state.get_data()
+    place, kind = int(data_state["nedobonus_place"]), data_state["nedobonus_kind"]
+    if kind == "money":
+        try:
+            amount = Decimal((message.text or "").strip().replace(",", "."))
+            if not amount.is_finite() or amount < 0 or amount > 1_000_000_000 or amount.as_tuple().exponent < -2:
+                raise ValueError
+            value = float(amount)
+        except (InvalidOperation, ValueError):
+            await message.answer("Введите сумму от 0 до 1 000 000 000 с максимум двумя знаками после точки.")
+            return
+    else:
+        value = (message.text or "").strip()
+        if not 1 <= len(value) <= 100 or any(ord(c) < 32 for c in value):
+            await message.answer("Название приза должно содержать от 1 до 100 символов.")
+            return
     try:
-        amount = Decimal((message.text or "").strip().replace(",", "."))
-        if not amount.is_finite() or amount < 0 or amount > 1_000_000_000 or amount.as_tuple().exponent < -2:
-            raise ValueError
-    except (InvalidOperation, ValueError):
-        await message.answer("Введите сумму от 0 до 1 000 000 000 с максимум двумя знаками после точки.")
-        return
-    place = int((await state.get_data())["nedobonus_place"])
-    try:
-        await asyncio.to_thread(nedobonus.set_prize, nedobonus_col, place, float(amount))
+        await asyncio.to_thread(nedobonus.set_prize, nedobonus_col, place, kind, value)
         amounts = await asyncio.to_thread(nedobonus.prizes, nedobonus_col)
     except Exception:
         logging.exception("Не удалось сохранить приз Недобонуса")
@@ -2503,7 +2557,8 @@ async def fsm_nedobonus_prize(message: types.Message, state: FSMContext):
 
 
 def nedobonus_prizes_lines(amounts):
-    return "\n".join(f"{place}. {amount:g} $" for place, amount in enumerate(amounts, 1) if amount > 0) or "Пока не установлены"
+    return "\n".join(f"{place}. {label}" for place, prize in enumerate(amounts, 1)
+                     if (label := nedobonus_prize_label(prize))) or "Пока не установлены"
 
 
 def nedobonus_period(active):
@@ -2513,10 +2568,13 @@ def nedobonus_period(active):
 
 @dp.message(Command("startnedobonus"))
 async def cmd_start_nedobonus(message: types.Message):
-    if message.chat.id != nedobonus.EVENT_GROUP_ID or message.from_user.id not in ADMIN_IDS:
+    if message.chat.id not in {nedobonus.EVENT_GROUP_ID, nedobonus.TEST_GROUP_ID} or message.from_user.id not in ADMIN_IDS:
         return
+    testing = message.chat.id == nedobonus.TEST_GROUP_ID
+    collection = nedobonus_test_col if testing else nedobonus_col
     try:
-        active = await asyncio.to_thread(nedobonus.start, nedobonus_col)
+        snapshot = await asyncio.to_thread(nedobonus.prizes, nedobonus_col)
+        active = await asyncio.to_thread(nedobonus.start, collection, None, snapshot)
     except Exception:
         logging.exception("Не удалось запустить Недобонус")
         await message.reply("Не удалось сохранить событие в базе. Попробуйте позже.")
@@ -2525,9 +2583,12 @@ async def cmd_start_nedobonus(message: types.Message):
         await message.reply("Событие уже идёт или предыдущее объявление ещё публикуется.")
         return
     await message.answer(
-        "🏆 <b>Начался новый ивент «Недобонус»!</b>\n\n"
-        "За каждый лок из канала начисляется 1 Недобонус.\n\n"
-        f"<b>Призовые места:</b>\n{nedobonus_prizes_lines(active['prizes'])}\n\n"
+        ("🧪 <b>Начался тестовый ивент «Недобонус»!</b>\n\n"
+         if testing else "🏆 <b>Начался новый ивент «Недобонус»!</b>\n\n")
+        + ("Добавляйте тестовые локи: <code>/addnedobonus @username 3 iPhone 13</code>\n"
+           "Посмотреть топ: <code>/topnedobonus</code>\n\n"
+           if testing else "За каждый лок из канала начисляется 1 Недобонус.\n\n")
+        + f"<b>Призовые места:</b>\n{nedobonus_prizes_lines(active['prizes'])}\n\n"
         f"📅 <b>Период:</b> {nedobonus_period(active)}",
         parse_mode="HTML",
     )
@@ -2536,39 +2597,100 @@ async def cmd_start_nedobonus(message: types.Message):
 _nedobonus_announcement_lock = asyncio.Lock()
 
 
-async def announce_nedobonus_result(finished):
+async def announce_nedobonus_result(finished, collection=None, group_id=None):
     if not finished:
         return
+    collection = collection or nedobonus_col
+    group_id = group_id or nedobonus.EVENT_GROUP_ID
     async with _nedobonus_announcement_lock:
-        current = await asyncio.to_thread(nedobonus.event, nedobonus_col)
+        current = await asyncio.to_thread(nedobonus.event, collection)
         if not current or current.get("event_id") != finished["event_id"] or current.get("announced"):
             return
-        leaders = await asyncio.to_thread(nedobonus.leaderboard, nedobonus_col, finished)
+        leaders = await asyncio.to_thread(nedobonus.leaderboard, collection, finished)
         rows = []
         for place, entry in enumerate(leaders[:30], 1):
             prize = finished["prizes"][place - 1] if place <= 10 else 0
-            reward = f" — 🏅 {prize:g} $" if prize > 0 else ""
+            label = nedobonus_prize_label(prize)
+            reward = f" — 🏅 {label}" if label else ""
             rows.append(f"{place}. @{html.escape(entry['username'])} — {entry['count']} локов{reward}")
         text = (
-            "🏁 <b>Ивент «Недобонус» окончен!</b>\n\n"
-            f"<b>Топ:</b>\n{chr(10).join(rows) or 'Участников пока нет'}\n\n"
+            ("🧪 <b>Тестовый ивент «Недобонус» окончен!</b>\n\n" if group_id == nedobonus.TEST_GROUP_ID
+             else "🏁 <b>Ивент «Недобонус» окончен!</b>\n\n")
+            + f"<b>Топ:</b>\n{chr(10).join(rows) or 'Участников пока нет'}\n\n"
             f"📅 <b>Ивент проводился:</b> {nedobonus_period(finished)}"
         )
-        await bot.send_message(nedobonus.EVENT_GROUP_ID, text[:4096], parse_mode="HTML")
-        await asyncio.to_thread(nedobonus_col.update_one,
+        await bot.send_message(group_id, text[:4096], parse_mode="HTML")
+        await asyncio.to_thread(collection.update_one,
                                 {"_id": "event", "event_id": finished["event_id"]},
                                 {"$set": {"announced": True}})
 
 
 @dp.message(Command("stopnedobonus"))
 async def cmd_stop_nedobonus(message: types.Message):
-    if message.chat.id != nedobonus.EVENT_GROUP_ID or message.from_user.id not in ADMIN_IDS:
+    if message.chat.id not in {nedobonus.EVENT_GROUP_ID, nedobonus.TEST_GROUP_ID} or message.from_user.id not in ADMIN_IDS:
         return
-    finished = await asyncio.to_thread(nedobonus.finish, nedobonus_col)
+    collection = nedobonus_test_col if message.chat.id == nedobonus.TEST_GROUP_ID else nedobonus_col
+    finished = await asyncio.to_thread(nedobonus.finish, collection)
     if not finished:
         await message.reply("Активного Недобонуса нет.")
         return
-    await announce_nedobonus_result(finished)
+    await announce_nedobonus_result(finished, collection, message.chat.id)
+
+
+@dp.message(Command("addnedobonus"))
+async def cmd_add_test_nedobonus(message: types.Message):
+    if message.chat.id != nedobonus.TEST_GROUP_ID or message.from_user.id not in ADMIN_IDS:
+        return
+    parts = (message.text or "").split(maxsplit=3)
+    if len(parts) < 2 or not parts[1].startswith("@") or not 5 <= len(parts[1][1:]) <= 32:
+        await message.reply("Формат: /addnedobonus @username [количество 1–100] [модель]")
+        return
+    username = parts[1][1:]
+    if not username.replace("_", "").isalnum() or not username.isascii():
+        await message.reply("Укажите корректный @username.")
+        return
+    count = 1
+    model = "Тестовый лок"
+    if len(parts) > 2:
+        if parts[2].isdigit():
+            count = int(parts[2])
+            model = parts[3].strip() if len(parts) > 3 else model
+        else:
+            model = " ".join(parts[2:]).strip()
+    if not 1 <= count <= 100 or not 1 <= len(model) <= 120:
+        await message.reply("Количество: 1–100. Модель: до 120 символов.")
+        return
+    active = await asyncio.to_thread(nedobonus.event, nedobonus_test_col)
+    if not active or active.get("status") != "active":
+        await message.reply("Сначала запустите тест: /startnedobonus")
+        return
+    user_id = await resolve_worker_id(username)
+    added = 0
+    try:
+        for index in range(count):
+            added += bool(await asyncio.to_thread(
+                nedobonus.add_lock, nedobonus_test_col, active, message.chat.id,
+                f"{message.message_id}:{index}", username, model, user_id,
+                nedobonus.now_utc(), nedobonus.TEST_GROUP_ID,
+            ))
+    except Exception:
+        logging.exception("Не удалось добавить тестовый Недобонус")
+        await message.reply("Ошибка сохранения. Уже записанные локи не потеряны; повтор команды их не удвоит.")
+        return
+    await message.reply(f"🧪 @{html.escape(username)}: добавлено {added} тестовых локов.", parse_mode="HTML")
+
+
+@dp.message(Command("topnedobonus"))
+async def cmd_top_test_nedobonus(message: types.Message):
+    if message.chat.id != nedobonus.TEST_GROUP_ID or message.from_user.id not in ADMIN_IDS:
+        return
+    active = await asyncio.to_thread(nedobonus.event, nedobonus_test_col)
+    if not active:
+        await message.reply("Тестовый ивент ещё не запускался.")
+        return
+    leaders = await asyncio.to_thread(nedobonus.leaderboard, nedobonus_test_col, active)
+    rows = [f"{i}. @{html.escape(row['username'])} — {row['count']}" for i, row in enumerate(leaders[:30], 1)]
+    await message.reply("🧪 <b>Тестовый топ:</b>\n" + ("\n".join(rows) or "Пока пусто"), parse_mode="HTML")
 
 
 @dp.channel_post(F.chat.id == nedobonus.SOURCE_CHANNEL_ID)
@@ -2591,14 +2713,16 @@ async def on_nedobonus_channel_post(message: types.Message):
 
 async def nedobonus_deadline_loop():
     while True:
-        try:
-            current = await asyncio.to_thread(nedobonus.event, nedobonus_col)
-            if current and current.get("status") == "active" and nedobonus.now_utc() >= nedobonus.as_utc(current["ends_at"]):
-                current = await asyncio.to_thread(nedobonus.finish, nedobonus_col)
-            if current and current.get("status") == "ended" and not current.get("announced"):
-                await announce_nedobonus_result(current)
-        except Exception:
-            logging.exception("Не удалось завершить Недобонус; повторю проверку")
+        for collection, group_id in ((nedobonus_col, nedobonus.EVENT_GROUP_ID),
+                                     (nedobonus_test_col, nedobonus.TEST_GROUP_ID)):
+            try:
+                current = await asyncio.to_thread(nedobonus.event, collection)
+                if current and current.get("status") == "active" and nedobonus.now_utc() >= nedobonus.as_utc(current["ends_at"]):
+                    current = await asyncio.to_thread(nedobonus.finish, collection)
+                if current and current.get("status") == "ended" and not current.get("announced"):
+                    await announce_nedobonus_result(current, collection, group_id)
+            except Exception:
+                logging.exception("Не удалось завершить Недобонус в группе %s", group_id)
         await asyncio.sleep(1)
 
 
