@@ -311,14 +311,17 @@ async function loadNedobonus() {
 
         const prizes = $('#nedobonusPrizes');
         prizes.replaceChildren();
-        (event.prizes || []).forEach((amount, index) => {
-            if (Number(amount) <= 0) return;
+        (event.prizes || []).forEach((prize, index) => {
+            const type = prize && typeof prize === 'object' ? prize.type : 'money';
+            const raw = prize && typeof prize === 'object' ? prize.value : prize;
+            if (type === 'money' && Number(raw) <= 0) return;
+            if (type === 'text' && !String(raw || '').trim()) return;
             const row = document.createElement('div');
             row.className = 'event-prize-row';
             const place = document.createElement('span');
             place.textContent = `${index + 1} место`;
             const value = document.createElement('strong');
-            value.textContent = money(amount);
+            value.textContent = type === 'text' ? String(raw) : money(raw);
             row.append(place, value);
             prizes.append(row);
         });
