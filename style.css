@@ -1340,13 +1340,13 @@ button:disabled {
         0 22px 60px rgba(0, 0, 0, .55),
         inset 0 1px rgba(255, 255, 255, .065);
     backdrop-filter: blur(22px) saturate(130%);
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     overflow: hidden;
 }
 
 .nav-indicator {
     position: absolute;
-    width: calc(25% - 3px);
+    width: calc(20% - 3px);
     height: calc(100% - 12px);
     top: 6px;
     left: 6px;
@@ -1389,6 +1389,37 @@ button:disabled {
     font-size: 7px;
     font-weight: 700;
 }
+
+.event-status {
+    margin: 0 2px 14px;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.event-status.is-live { color: var(--gold-light); }
+
+.event-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 16px;
+    gap: 9px;
+}
+
+.event-summary > div,
+.event-prizes {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-xl);
+    background: linear-gradient(140deg, rgba(228, 189, 118, .08), rgba(255, 255, 255, .025));
+}
+
+.event-summary > div { display: grid; min-height: 95px; padding: 17px; align-content: center; gap: 7px; }
+.event-summary span { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .6px; }
+.event-summary strong { color: var(--ivory); font-family: var(--font-display); font-size: 31px; line-height: 1; }
+.event-prizes { padding: 19px; }
+.event-prizes h2 { margin: 4px 0 13px; font-family: var(--font-display); font-size: 24px; font-weight: 600; }
+#nedobonusPrizes { color: var(--muted); font-size: 11px; }
+.event-prize-row { display: flex; padding: 9px 0; justify-content: space-between; border-top: 1px solid var(--line); }
+.event-prize-row strong { color: var(--gold-light); font-weight: 700; }
 
 .sheet-overlay {
     position: fixed;

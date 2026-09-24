@@ -179,6 +179,31 @@
                 <div class="leaderboard" id="leaderboard"><div class="empty-state">Загрузка рейтинга…</div></div>
             </section>
 
+            <section class="screen" data-screen="nedobonus">
+                <div class="rating-head">
+                    <div>
+                        <span class="eyebrow">10 DAYS · 1 LOCK = 1 POINT</span>
+                        <h1>Недобонус</h1>
+                        <p id="nedobonusPeriod">Ожидаем начало события</p>
+                    </div>
+                    <div class="trophy-seal" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4H4v3a5 5 0 0 0 5 5m8-8h3v3a5 5 0 0 1-5 5M7 3h10v6a5 5 0 0 0 5-5M7 3h10v6a5 5 0 0 1-10 0V3Z"/></svg>
+                    </div>
+                </div>
+                <div class="event-status" id="nedobonusStatus">Событие ещё не началось</div>
+                <div class="event-summary">
+                    <div><span>ВАШИ НЕДОБОНУСЫ</span><strong id="nedobonusCount">0</strong></div>
+                    <div><span>МЕСТО В ТОПЕ</span><strong id="nedobonusPlace">—</strong></div>
+                </div>
+                <article class="event-prizes">
+                    <span class="eyebrow">PRIZE POOL</span>
+                    <h2>Призовые места</h2>
+                    <div id="nedobonusPrizes">Призы пока не объявлены</div>
+                </article>
+                <div class="section-heading"><div><span class="eyebrow">EVENT LEADERBOARD</span><h2>Топ по локам</h2></div></div>
+                <div class="leaderboard" id="nedobonusLeaderboard"><div class="empty-state">Загрузка рейтинга…</div></div>
+            </section>
+
             <section class="screen" data-screen="profile">
                 <article class="profile-hero">
                     <div class="profile-hero-lines" aria-hidden="true"></div>
@@ -214,6 +239,7 @@
             <button class="active" data-target="home" aria-label="Главная"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10Z"/></svg><span>Главная</span></button>
             <button data-target="profits" aria-label="Профиты"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m6 14v-7m5 7V3"/></svg><span>Профиты</span></button>
             <button data-target="rating" aria-label="Рейтинг"><svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4H4v3a5 5 0 0 0 5 5m8-8h3v3a5 5 0 0 1-5 5M7 3h10v6a5 5 0 0 1-10 0V3Z"/></svg><span>Топ</span></button>
+            <button data-target="nedobonus" aria-label="Недобонус"><svg viewBox="0 0 24 24"><path d="m12 2 2.4 6.9L22 9l-5.7 4.5 2 7L12 16.4l-6.3 4.1 2-7L2 9l7.6-.1L12 2Z"/></svg><span>Недобонус</span></button>
             <button data-target="profile" aria-label="Профиль"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Профиль</span></button>
         </nav>
     </div>

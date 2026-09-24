@@ -8,6 +8,7 @@ from functools import wraps
 from urllib.parse import parse_qsl
 
 import pymongo
+import nedobonus
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, request, send_file, send_from_directory
 
@@ -36,6 +37,7 @@ mongo = pymongo.MongoClient(
 )
 db = mongo[MONGO_DB_NAME]
 users_col = db["users"]
+nedobonus_col = db["nedobonus"]
 
 RANKS_CONFIG = {
     "Студент": 0,
@@ -233,6 +235,19 @@ def leaderboard(kind):
     except pymongo.errors.PyMongoError:
         logging.exception("Failed to load leaderboard")
         return api_error("Не удалось загрузить рейтинг", 503)
+
+
+@app.route("/api/nedobonus", methods=["GET"])
+@telegram_auth
+def get_nedobonus():
+    try:
+        data = nedobonus.public_payload(
+            nedobonus_col, g.user_id, g.telegram_user.get("username")
+        )
+        return jsonify({"success": True, "data": data})
+    except pymongo.errors.PyMongoError:
+        logging.exception("Failed to load Nedobonus for user %s", g.user_id)
+        return api_error("Не удалось загрузить Недобонус", 503)
 
 
 @app.errorhandler(404)
