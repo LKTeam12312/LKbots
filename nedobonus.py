@@ -11,6 +11,7 @@ import uuid
 
 SOURCE_CHANNEL_ID = -1004192767524
 EVENT_GROUP_ID = -1004398908256
+TEST_GROUP_ID = -1004485193806
 DURATION = dt.timedelta(days=10)
 UTC = dt.timezone.utc
 
@@ -46,16 +47,43 @@ def format_date(value):
     return as_utc(value).strftime("%d.%m.%Y %H:%M UTC")
 
 
+def normalize_prize(raw):
+    if isinstance(raw, dict):
+        kind = raw.get("type")
+        value = raw.get("value")
+        if kind == "text" and isinstance(value, str) and value.strip():
+            return {"type": "text", "value": value.strip()[:100]}
+        if kind == "money":
+            try:
+                return {"type": "money", "value": max(0.0, float(value))}
+            except (TypeError, ValueError):
+                pass
+    try:
+        return {"type": "money", "value": max(0.0, float(raw))}
+    except (TypeError, ValueError):
+        return {"type": "money", "value": 0.0}
+
+
 def prizes(collection):
     doc = collection.find_one({"_id": "prizes"}) or {}
-    return [float((doc.get("amounts") or [])[i]) if i < len(doc.get("amounts") or []) else 0.0 for i in range(10)]
+    values = doc.get("amounts") or []
+    return [normalize_prize(values[i] if i < len(values) else 0) for i in range(10)]
 
 
-def set_prize(collection, place, amount):
-    if not 1 <= place <= 10 or not 0 <= amount <= 1_000_000_000:
+def set_prize(collection, place, kind, value):
+    if not 1 <= place <= 10 or kind not in {"money", "text"}:
         raise ValueError("Invalid prize")
+    if kind == "money":
+        value = float(value)
+        if not 0 <= value <= 1_000_000_000:
+            raise ValueError("Invalid prize amount")
+        value = round(value, 2)
+    else:
+        value = str(value).strip()
+        if not 1 <= len(value) <= 100 or any(ord(c) < 32 for c in value):
+            raise ValueError("Invalid prize name")
     current = prizes(collection)
-    current[place - 1] = round(float(amount), 2)
+    current[place - 1] = {"type": kind, "value": value}
     collection.update_one({"_id": "prizes"}, {"$set": {"amounts": current}}, upsert=True)
 
 
@@ -63,7 +91,7 @@ def event(collection):
     return collection.find_one({"_id": "event"})
 
 
-def start(collection, started_at=None):
+def start(collection, started_at=None, prize_snapshot=None):
     """Atomically start a new event; never replace an active one."""
     from pymongo import ReturnDocument
 
@@ -72,7 +100,8 @@ def start(collection, started_at=None):
     snapshot = {
         "status": "active", "event_id": uuid.uuid4().hex,
         "started_at": started_at, "ends_at": started_at + DURATION,
-        "ended_at": None, "announced": False, "prizes": prizes(collection),
+        "ended_at": None, "announced": False,
+        "prizes": [normalize_prize(p) for p in prize_snapshot] if prize_snapshot is not None else prizes(collection),
     }
     return collection.find_one_and_update(
         {"_id": "event", "status": {"$ne": "active"}, "announced": {"$ne": False}},
@@ -80,11 +109,11 @@ def start(collection, started_at=None):
     )
 
 
-def add_lock(collection, active, channel_id, message_id, username, model, user_id=None, timestamp=None):
+def add_lock(collection, active, channel_id, message_id, username, model, user_id=None, timestamp=None, source_id=SOURCE_CHANNEL_ID):
     """Atomic per-user update; one channel message contributes exactly one lock."""
     timestamp = as_utc(timestamp or now_utc())
     if (not active or active.get("status") != "active"
-            or channel_id != SOURCE_CHANNEL_ID
+            or channel_id != source_id
             or timestamp < as_utc(active["started_at"])
             or timestamp >= as_utc(active["ends_at"])
             or now_utc() >= as_utc(active["ends_at"])):
@@ -160,7 +189,7 @@ def public_payload(collection, user_id, username=None):
         "started_at": as_utc(current["started_at"]).isoformat() if current and current.get("started_at") else None,
         "ends_at": as_utc(current["ends_at"]).isoformat() if current and current.get("ends_at") else None,
         "ended_at": as_utc(current["ended_at"]).isoformat() if current and current.get("ended_at") else None,
-        "prizes": current.get("prizes", [0] * 10) if current else prizes(collection),
+        "prizes": [normalize_prize(p) for p in current.get("prizes", [])] if current else prizes(collection),
         "me": {"count": own_count, "position": position},
         "leaders": [
             {"position": index, "username": row["username"], "count": row["count"]}
