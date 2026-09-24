@@ -289,6 +289,83 @@ async function loadLeaderboard(kind = state.rating) {
     }
 }
 
+
+async function loadNedobonus() {
+    const container = $('#nedobonusLeaderboard');
+    container.replaceChildren();
+    const pending = document.createElement('div');
+    pending.className = 'empty-state';
+    pending.textContent = 'Формируем рейтинг…';
+    container.append(pending);
+    try {
+        const event = await api('/nedobonus');
+        const start = event.started_at && shortDate(event.started_at);
+        const end = event.status === 'ended' ? shortDate(event.ended_at) : shortDate(event.ends_at);
+        $('#nedobonusPeriod').textContent = start ? `${start} — ${end}` : 'Дата будет объявлена при старте';
+        $('#nedobonusStatus').textContent = event.status === 'active'
+            ? '● Событие идёт · 1 лок = 1 Недобонус'
+            : event.status === 'ended' ? 'Событие завершено' : 'Событие ещё не началось';
+        $('#nedobonusStatus').classList.toggle('is-live', event.status === 'active');
+        $('#nedobonusCount').textContent = String(event.me.count || 0);
+        $('#nedobonusPlace').textContent = event.me.position ? `#${event.me.position}` : '—';
+
+        const prizes = $('#nedobonusPrizes');
+        prizes.replaceChildren();
+        (event.prizes || []).forEach((amount, index) => {
+            if (Number(amount) <= 0) return;
+            const row = document.createElement('div');
+            row.className = 'event-prize-row';
+            const place = document.createElement('span');
+            place.textContent = `${index + 1} место`;
+            const value = document.createElement('strong');
+            value.textContent = money(amount);
+            row.append(place, value);
+            prizes.append(row);
+        });
+        if (!prizes.childElementCount) prizes.textContent = 'Призы пока не объявлены';
+
+        container.replaceChildren();
+        const leaders = event.leaders || [];
+        if (!leaders.length) {
+            const empty = document.createElement('div');
+            empty.className = 'empty-state';
+            empty.textContent = 'Пока нет засчитанных локов';
+            container.append(empty);
+            return;
+        }
+        leaders.forEach((user) => {
+            const item = document.createElement('article');
+            item.className = 'leader-item';
+            if (user.position <= 3) item.classList.add('is-top');
+            if (user.position === event.me.position &&
+                user.username.toLowerCase() === (tg?.initDataUnsafe?.user?.username || '').toLowerCase()) item.classList.add('is-me');
+            const place = document.createElement('div');
+            place.className = 'leader-place';
+            place.textContent = String(user.position).padStart(2, '0');
+            const avatar = document.createElement('div');
+            avatar.className = 'leader-avatar';
+            avatar.textContent = initials(user.username);
+            const person = document.createElement('div');
+            person.className = 'leader-person';
+            const name = document.createElement('strong');
+            name.textContent = `@${user.username}`;
+            person.append(name);
+            const score = document.createElement('div');
+            score.className = 'leader-value';
+            score.textContent = String(user.count);
+            item.append(place, avatar, person, score);
+            container.append(item);
+        });
+    } catch (error) {
+        container.replaceChildren();
+        const failed = document.createElement('div');
+        failed.className = 'empty-state';
+        failed.textContent = 'Не удалось загрузить Недобонус';
+        container.append(failed);
+        showToast(error.message);
+    }
+}
+
 function openSettings() {
     $('#settingsOverlay').classList.add('show');
     $('#settingsOverlay').setAttribute('aria-hidden', 'false');
@@ -330,6 +407,7 @@ function switchScreen(target, button, index) {
     $(`[data-screen="${target}"]`).classList.add('active');
     $('.nav-indicator').style.transform = `translateX(${index * 100}%)`;
     if (target === 'rating') loadLeaderboard();
+    if (target === 'nedobonus') loadNedobonus();
     haptic();
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -410,8 +488,14 @@ async function init() {
     if (state.user) loadLeaderboard('locks');
     state.refreshTimer = setInterval(() => refresh(true), 60000);
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') refresh(true);
+        if (document.visibilityState === 'visible') {
+            refresh(true);
+            if (state.screen === 'nedobonus') loadNedobonus();
+        }
     });
+    setInterval(() => {
+        if (document.visibilityState === 'visible' && state.screen === 'nedobonus') loadNedobonus();
+    }, 30000);
 }
 
 document.addEventListener('DOMContentLoaded', init);
