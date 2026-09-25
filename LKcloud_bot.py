@@ -343,6 +343,12 @@ def add_to_blacklist(user_id: int, reason: str = "Забан админом"):
         if user_id in user_data:
             del user_data[user_id]
         
+        # Удаляем кэш username, чтобы бот не сохранял старую личность.
+        known_users_col.delete_many({"user_id": user_id})
+        for cache_key in list(_known_user_cache):
+            if cache_key[0] == user_id:
+                del _known_user_cache[cache_key]
+
         # Удаляем заявку
         applications_col.delete_one({"user_id": user_id})
         if user_id in applications:
@@ -391,7 +397,7 @@ def get_ref_percent(referrer_id: int) -> float:
 
 async def remember_user(user: types.User, chat_id: int | None = None):
     """Keeps a safe username -> Telegram ID cache for group-scoped commands."""
-    if not user:
+    if not user or is_blacklisted(user.id):
         return
     payload = {
         'user_id': user.id,
