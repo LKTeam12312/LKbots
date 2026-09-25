@@ -1786,10 +1786,13 @@ async def cb_apply_submit(call: types.CallbackQuery):
     )
     
     # Отправляем уведомление админам
-    u_name = user_data.get(cid, {}).get('name', f"ID: {cid}")
+    u_name = html.escape(str(user_data.get(cid, {}).get('name', f"ID: {cid}")))
+    source_text = html.escape(str(app.get('source', '-')))
+    experience_text = html.escape(str(app.get('experience', '-')))
+    time_text = html.escape(str(app.get('time', '-')))
     admin_notify = (
         f"📩 <b>Новая заявка!</b>\n\n👤 <b>Пользователь:</b> {u_name} (ID: <code>{cid}</code>)\n"
-        f"• Откуда: {app.get('source', '-')}\n• Опыт: {app.get('experience', '-')}\n• Время: {app.get('time', '-')}"
+        f"• Откуда: {source_text}\n• Опыт: {experience_text}\n• Время: {time_text}"
     )
     for admin_id in ADMIN_IDS:
         try:
@@ -2602,7 +2605,7 @@ _nedobonus_announcement_lock = asyncio.Lock()
 async def announce_nedobonus_result(finished, collection=None, group_id=None):
     if not finished:
         return
-    collection = collection or nedobonus_col
+    collection = collection if collection is not None else nedobonus_col
     group_id = group_id or nedobonus.EVENT_GROUP_ID
     async with _nedobonus_announcement_lock:
         current = await asyncio.to_thread(nedobonus.event, collection)
