@@ -1133,7 +1133,12 @@ async def cmd_rules(message: types.Message):
 async def cmd_mp(message: types.Message):
     if not is_group(message): return
     uid = message.from_user.id
-    data = init_user(uid, message.from_user.first_name)
+    init_user(uid, message.from_user.first_name)
+    data = await asyncio.to_thread(
+        users_col.find_one,
+        {'user_id': int(uid)},
+        {'status_approved': 1, 'joined_at': 1, 'locks': 1, 'cash': 1},
+    ) or {}
     if not data.get('status_approved'):
         await message.reply("🔒 У вас нет доступа к боту.")
         return
@@ -1156,10 +1161,14 @@ async def cmd_mp(message: types.Message):
 @dp.message(Command("top"))
 async def cmd_top(message: types.Message):
     if not is_group(message): return
-    sorted_users = sorted(
-        [(uid, info) for uid, info in user_data.items() if info.get('status_approved')],
-        key=lambda x: x[1].get('locks', 0), reverse=True
+    # Read the leaderboard from MongoDB so manual edits are visible immediately.
+    top_users = await asyncio.to_thread(
+        lambda: list(users_col.find(
+            {'status_approved': True},
+            {'user_id': 1, 'name': 1, 'locks': 1, 'cash': 1},
+        ).sort('locks', pymongo.DESCENDING).limit(10))
     )
+    sorted_users = [(int(info['user_id']), info) for info in top_users]
     if not sorted_users:
         await message.reply("📭 Список пуст.")
         return
