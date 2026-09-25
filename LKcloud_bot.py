@@ -1138,10 +1138,11 @@ async def cmd_mp(message: types.Message):
         await message.reply("🔒 У вас нет доступа к боту.")
         return
     joined_date = datetime.datetime.fromtimestamp(data.get('joined_at', time.time())).strftime("%d.%m.%Y")
-    username_str = f"@{message.from_user.username}" if message.from_user.username else "не указан"
+    display_name = html.escape(str(message.from_user.first_name or "Воркер"))
+    username_str = html.escape(f"@{message.from_user.username}") if message.from_user.username else "не указан"
     text = (
         f"<tg-emoji emoji-id='5275979556308674886'>👤</tg-emoji> <b>Профиль воркера</b>\n\n"
-        f"<tg-emoji emoji-id='5411554197621463099'>📛</tg-emoji> Имя: {message.from_user.first_name}\n"
+        f"<tg-emoji emoji-id='5411554197621463099'>📛</tg-emoji> Имя: {display_name}\n"
         f"<tg-emoji emoji-id='5014902839575577394'>🆔</tg-emoji> Username: {username_str}\n"
         f"<tg-emoji emoji-id='5258476306152038031'>🔒</tg-emoji> Локов: {data.get('locks', 0)}\n"
         f"<tg-emoji emoji-id='5224257782013769471'>💰</tg-emoji> Заработано: {data.get('cash', 0.0):g}$\n"
@@ -1180,7 +1181,7 @@ async def cmd_top(message: types.Message):
         medal = medals.get(i, f"<b>{i}.</b>")
         locks = info.get('locks', 0)
         cash = info.get('cash', 0.0)
-        name = info.get('name', 'Воркер')
+        name = html.escape(str(info.get('name', 'Воркер')))
         text += f"{medal} <b>{name}</b>\n"
         text += f"     🔒 {locks} локов • 💰 {cash:g}$\n\n"
     await message.reply(text, parse_mode="HTML")
