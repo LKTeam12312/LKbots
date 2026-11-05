@@ -160,6 +160,31 @@ function renderProfitFacts(profits) {
     $('#profitAverage').textContent = money(average);
     $('#profitBest').textContent = money(best);
     $('#profitOperations').textContent = String(amounts.length);
+    renderSparkline(amounts);
+}
+
+function renderSparkline(amounts) {
+    const svg = $('#profitChart');
+    if (!svg) return;
+    svg.replaceChildren();
+    if (amounts.length < 2) {
+        svg.classList.add('is-empty');
+        return;
+    }
+    svg.classList.remove('is-empty');
+    let sum = 0;
+    const totals = amounts.map((amount) => (sum += amount));
+    const width = 280;
+    const height = 56;
+    const pad = 3;
+    const points = totals.map((value, index) => {
+        const x = (index / (totals.length - 1)) * width;
+        const y = height - pad - (value / sum) * (height - pad * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    line.setAttribute('points', points.join(' '));
+    svg.append(line);
 }
 
 function renderUser(user) {
@@ -253,7 +278,7 @@ function renderLeaderboard(users, kind) {
 
         const place = document.createElement('div');
         place.className = 'leader-place';
-        place.textContent = String(index + 1).padStart(2, '0');
+        place.textContent = String(index + 1);
 
         const avatar = document.createElement('div');
         avatar.className = 'leader-avatar';
@@ -303,7 +328,7 @@ async function loadNedobonus() {
         const end = event.status === 'ended' ? shortDate(event.ended_at) : shortDate(event.ends_at);
         $('#nedobonusPeriod').textContent = start ? `${start} — ${end}` : 'Дата будет объявлена при старте';
         $('#nedobonusStatus').textContent = event.status === 'active'
-            ? '● Событие идёт · 1 лок = 1 Недобонус'
+            ? 'Событие идёт'
             : event.status === 'ended' ? 'Событие завершено' : 'Событие ещё не началось';
         $('#nedobonusStatus').classList.toggle('is-live', event.status === 'active');
         $('#nedobonusCount').textContent = String(event.me.count || 0);
@@ -344,7 +369,7 @@ async function loadNedobonus() {
                 user.username.toLowerCase() === (tg?.initDataUnsafe?.user?.username || '').toLowerCase()) item.classList.add('is-me');
             const place = document.createElement('div');
             place.className = 'leader-place';
-            place.textContent = String(user.position).padStart(2, '0');
+            place.textContent = String(user.position);
             const avatar = document.createElement('div');
             avatar.className = 'leader-avatar';
             avatar.textContent = initials(user.username);
@@ -481,8 +506,8 @@ async function init() {
     tg?.ready();
     tg?.expand();
     try {
-        tg?.setBackgroundColor('#090806');
-        tg?.setHeaderColor('#090806');
+        tg?.setBackgroundColor('#0b0a08');
+        tg?.setHeaderColor('#0b0a08');
         tg?.enableClosingConfirmation?.();
     } catch (_) {}
 
