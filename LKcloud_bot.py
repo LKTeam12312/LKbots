@@ -266,7 +266,7 @@ except Exception as e:
 global_settings = {
     'base_profits': 0,
     'base_cash': 0.0,
-    'mentor_link': 'https://t.me/+w2PVX7szVsw4MmQy'
+    'mentor_link': 'https://t.me/mashwsjsss'
 }
 
 
@@ -1547,8 +1547,8 @@ async def cmd_unban(message: types.Message):
 # =========================================================
 # /pluslokhgasdgasdu
 # =========================================================
-LOCK_CHAT_ID = -1004485193806
-PROFIT_CHAT_ID = -1004409257430
+LOCK_CHAT_ID = -5072371561
+PROFIT_CHAT_ID = -1004313217441
 
 def _generate_profit_card_sync(rank: str, worker_tag: str, service: str, amount: float, share: float) -> io.BytesIO:
     template_path = os.path.join(BASE_DIR, 'images', 'profit_card.jpg')
