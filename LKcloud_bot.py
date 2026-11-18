@@ -163,7 +163,7 @@ except Exception as e:
 global_settings = {
     'base_profits': 0,
     'base_cash': 0.0,
-    'mentor_link': 'https://t.me/+Dw1yqXJJU1FmNmNi'
+    'mentor_link': 'https://t.me/+w2PVX7szVsw4MmQy'
 }
 
 def load_db():
@@ -2283,11 +2283,11 @@ async def cb_menu_about(call: types.CallbackQuery):
     )
     builder = InlineKeyboardBuilder()
     builder.row(
-        types.InlineKeyboardButton(text='Общий чат',       url='https://t.me/+C8p0KE54ZudlNzM6', icon_custom_emoji_id='5443038326535759644'),
+        types.InlineKeyboardButton(text='Общий чат',       url='https://t.me/+6iEtCsjnLR9mM2Zi', icon_custom_emoji_id='5443038326535759644'),
         types.InlineKeyboardButton(text='Мануалы',         url='https://t.me/+WZhhjJ1b8uk1YzUy', icon_custom_emoji_id='5278753302023004775'),
     )
     builder.row(
-        types.InlineKeyboardButton(text='Канал профитов',  url='https://t.me/+kxuAJ546U0M4Mjdi', icon_custom_emoji_id='5391292736647209211'),
+        types.InlineKeyboardButton(text='Канал профитов',  url='https://t.me/+8u9lp0VRIg1lMGZi', icon_custom_emoji_id='5391292736647209211'),
         types.InlineKeyboardButton(text='Правила',         callback_data='about_rules', icon_custom_emoji_id='5278753302023004775'),
     )
     builder.row(types.InlineKeyboardButton(text='  Назад', callback_data='menu_main', icon_custom_emoji_id='5352759161945867747'))
