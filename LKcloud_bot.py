@@ -1778,7 +1778,7 @@ async def cmd_profit(message: types.Message):
         pass
 
 
-@dp.message(Command("pluslokhgasdgasdu"))
+@dp.message(Command("pluslok"))
 async def cmd_plus_lock(message: types.Message):
     if message.chat.id != LOCK_CHAT_ID: return
     if not await is_tg_admin(message.chat.id, message.from_user.id):
@@ -1786,7 +1786,7 @@ async def cmd_plus_lock(message: types.Message):
         return
     parts = message.text.strip().split(maxsplit=2)
     if len(parts) < 3:
-        await message.reply("❌ Формат: /pluslokhgasdgasdu @username название модели")
+        await message.reply("❌ Формат: /pluslok @username название модели")
         return
     username_arg = parts[1].lstrip('@').lower()
     model_name = parts[2]
@@ -2235,7 +2235,7 @@ async def cb_adm_edit_lock(call: types.CallbackQuery, state: FSMContext):
     current_count = lock_count(user_data.get(target_id, {}))
     await call.answer(
         f"Сейчас {current_count} локов. Счётчик автоматически считается по истории. "
-        "Добавляйте локи через команду /pluslokhgasdgasdu.",
+        "Добавляйте локи через команду /pluslok.",
         show_alert=True,
     )
 
@@ -2529,7 +2529,7 @@ async def fsm_lock(message: types.Message, state: FSMContext):
     if message.from_user.id in ADMIN_IDS:
         await message.answer(
             "Количество локов считается автоматически по истории. "
-            "Добавляйте реальные локи через /pluslokhgasdgasdu."
+            "Добавляйте реальные локи через /pluslok."
         )
 
 @dp.message(AdminStates.wait_ref)
