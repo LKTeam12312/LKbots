@@ -10,7 +10,8 @@ from decimal import Decimal, InvalidOperation
 import nedobonus
 from PIL import Image, ImageDraw, ImageFont
 import io
-import pymongo  # Добавили импорт pymongo
+import pymongo
+from bson import json_util
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.methods import DeleteWebhook
@@ -149,8 +150,110 @@ admin_actions_col = db["admin_actions"]
 nedobonus_col = db["nedobonus"]
 nedobonus_test_col = db["nedobonus_test"]
 
+def _normalized_lock_history(document):
+    history = document.get('lock_history')
+    return history if isinstance(history, list) else []
+
+
+def repair_users_and_create_indexes():
+    """Archive duplicate user documents, merge lock history, then create unique index.
+
+    Duplicate documents are copied in full to users_duplicate_archive before deletion.
+    For conflicting non-history fields, the canonical document is retained; missing
+    fields are filled from duplicates. Balance is never calculated from locks/history.
+    """
+    archive_col = db['users_duplicate_archive']
+    grouped = {}
+
+    for document in users_col.find():
+        raw_user_id = document.get('user_id')
+        try:
+            user_id = int(raw_user_id)
+        except (TypeError, ValueError):
+            raise RuntimeError(
+                f"Invalid user_id in users document _id={document.get('_id')!r}: {raw_user_id!r}"
+            )
+        grouped.setdefault(user_id, []).append(document)
+
+    for user_id, documents in grouped.items():
+        # Keep the record with the fullest lock history as canonical.
+        documents.sort(
+            key=lambda item: (len(_normalized_lock_history(item)), str(item.get('_id'))),
+            reverse=True,
+        )
+        primary = documents[0]
+
+        if len(documents) > 1:
+            # Archive every non-canonical document before modifying/deleting it.
+            for duplicate in documents[1:]:
+                archive_id = f"{user_id}:{duplicate['_id']}"
+                archive_col.update_one(
+                    {'_id': archive_id},
+                    {'$setOnInsert': {
+                        'user_id': user_id,
+                        'original_document': duplicate,
+                        'archived_at': datetime.datetime.now(datetime.timezone.utc),
+                    }},
+                    upsert=True,
+                )
+
+            # Merge duplicate histories as a multiset: preserve repeated identical
+            # entries within a document, but do not multiply an identical copied
+            # history merely because the same user document existed more than once.
+            merged_history = copy.deepcopy(_normalized_lock_history(primary))
+            max_occurrences = {}
+            for entry in merged_history:
+                key = json_util.dumps(entry, sort_keys=True)
+                max_occurrences[key] = max_occurrences.get(key, 0) + 1
+
+            for document in documents[1:]:
+                local_occurrences = {}
+                for entry in _normalized_lock_history(document):
+                    key = json_util.dumps(entry, sort_keys=True)
+                    local_occurrences[key] = local_occurrences.get(key, 0) + 1
+                    if local_occurrences[key] > max_occurrences.get(key, 0):
+                        merged_history.append(copy.deepcopy(entry))
+                        max_occurrences[key] = local_occurrences[key]
+
+            # Fill missing fields without overwriting the canonical record's values.
+            merged_fields = {}
+            for duplicate in documents[1:]:
+                for field, value in duplicate.items():
+                    if field not in {'_id', 'user_id', 'locks', 'lock_history'}:
+                        if field not in primary or primary[field] is None:
+                            merged_fields[field] = value
+            merged_fields.update({
+                'user_id': user_id,
+                'lock_history': merged_history,
+                'locks': len(merged_history),
+            })
+            users_col.update_one({'_id': primary['_id']}, {'$set': merged_fields})
+            users_col.delete_many({'_id': {'$in': [doc['_id'] for doc in documents[1:]]}})
+            logging.warning(
+                'Archived and merged %s duplicate user document(s) for user_id=%s',
+                len(documents) - 1, user_id,
+            )
+        else:
+            history = _normalized_lock_history(primary)
+            users_col.update_one(
+                {'_id': primary['_id']},
+                {'$set': {'user_id': user_id, 'lock_history': history, 'locks': len(history)}},
+            )
+
+    # Remove a stale non-unique single-field index before creating the unique one.
+    # MongoDB cannot upgrade an existing index's options in-place.
+    for existing_index in users_col.list_indexes():
+        key = dict(existing_index.get('key', {}))
+        if key == {'user_id': 1} and not existing_index.get('unique', False):
+            users_col.drop_index(existing_index['name'])
+
+    # Do not swallow this error: bot startup must not continue without the unique index.
+    users_col.create_index('user_id', unique=True, name='user_id_1')
+
+
+repair_users_and_create_indexes()
+
 try:
-    users_col.create_index('user_id', unique=True)
     users_col.create_index('username_lower', sparse=True)
     known_users_col.create_index('user_id', unique=True)
     known_users_col.create_index('username_lower')
@@ -158,13 +261,20 @@ try:
     nedobonus_col.create_index([('kind', 1), ('event_id', 1)])
     nedobonus_test_col.create_index([('kind', 1), ('event_id', 1)])
 except Exception as e:
-    logging.warning('Не удалось создать индексы MongoDB: %s', e)
+    logging.warning('Не удалось создать дополнительные индексы MongoDB: %s', e)
 
 global_settings = {
     'base_profits': 0,
     'base_cash': 0.0,
     'mentor_link': 'https://t.me/+w2PVX7szVsw4MmQy'
 }
+
+
+def lock_count(user):
+    """The only source of truth for a worker's lock count is lock_history."""
+    history = user.get('lock_history') if isinstance(user, dict) else None
+    return len(history) if isinstance(history, list) else 0
+
 
 def load_db():
     """Load production data with retries; an empty fallback is forbidden."""
@@ -182,6 +292,15 @@ def load_db():
             loaded_users = {}
             for user in users_col.find():
                 user_id = int(user["user_id"])
+                history = _normalized_lock_history(user)
+                actual_locks = len(history)
+                if user.get('locks') != actual_locks or not isinstance(user.get('lock_history'), list):
+                    users_col.update_one(
+                        {'_id': user['_id']},
+                        {'$set': {'lock_history': history, 'locks': actual_locks}},
+                    )
+                user['lock_history'] = history
+                user['locks'] = actual_locks
                 user.pop("_id", None)
                 user.pop("user_id", None)
                 loaded_users[user_id] = user
@@ -288,11 +407,20 @@ def save_db(user_fields=None, settings_fields=None):
         cached = user_data.get(user_id)
         if not isinstance(cached, dict):
             raise RuntimeError(f"Cannot save unknown user {user_id}")
+        requested_fields = set(field_names)
         payload = {
             field: copy.deepcopy(cached[field])
-            for field in set(field_names)
+            for field in requested_fields
             if field in cached
         }
+        if requested_fields.intersection({'locks', 'lock_history'}):
+            # Never trust a separately edited counter; derive it from the real history.
+            history = cached.get('lock_history')
+            history = history if isinstance(history, list) else []
+            cached['lock_history'] = history
+            cached['locks'] = len(history)
+            payload['lock_history'] = copy.deepcopy(history)
+            payload['locks'] = len(history)
         if payload:
             user_updates[user_id] = payload
 
@@ -1137,11 +1265,13 @@ async def cmd_mp(message: types.Message):
     data = await asyncio.to_thread(
         users_col.find_one,
         {'user_id': int(uid)},
-        {'status_approved': 1, 'joined_at': 1, 'locks': 1, 'cash': 1},
+        {'status_approved': 1, 'joined_at': 1, 'locks': 1, 'lock_history': 1, 'cash': 1},
     ) or {}
     if not data.get('status_approved'):
         await message.reply("🔒 У вас нет доступа к боту.")
         return
+    locks_count = lock_count(data)
+    data['locks'] = locks_count
     joined_date = datetime.datetime.fromtimestamp(data.get('joined_at', time.time())).strftime("%d.%m.%Y")
     display_name = html.escape(str(message.from_user.first_name or "Воркер"))
     username_str = html.escape(f"@{message.from_user.username}") if message.from_user.username else "не указан"
@@ -1149,7 +1279,7 @@ async def cmd_mp(message: types.Message):
         f"<tg-emoji emoji-id='5275979556308674886'>👤</tg-emoji> <b>Профиль воркера</b>\n\n"
         f"<tg-emoji emoji-id='5411554197621463099'>📛</tg-emoji> Имя: {display_name}\n"
         f"<tg-emoji emoji-id='5014902839575577394'>🆔</tg-emoji> Username: {username_str}\n"
-        f"<tg-emoji emoji-id='5258476306152038031'>🔒</tg-emoji> Локов: {data.get('locks', 0)}\n"
+        f"<tg-emoji emoji-id='5258476306152038031'>🔒</tg-emoji> Локов: {locks_count}\n"
         f"<tg-emoji emoji-id='5224257782013769471'>💰</tg-emoji> Заработано: {data.get('cash', 0.0):g}$\n"
         f"<tg-emoji emoji-id='5413879192267805083'>📅</tg-emoji> В команде с: {joined_date}"
     )
@@ -1162,12 +1292,17 @@ async def cmd_mp(message: types.Message):
 async def cmd_top(message: types.Message):
     if not is_group(message): return
     # Read the leaderboard from MongoDB so manual edits are visible immediately.
-    top_users = await asyncio.to_thread(
-        lambda: list(users_col.find(
+    def _load_lock_leaderboard():
+        rows = list(users_col.find(
             {'status_approved': True},
-            {'user_id': 1, 'name': 1, 'locks': 1, 'cash': 1},
-        ).sort('locks', pymongo.DESCENDING).limit(10))
-    )
+            {'user_id': 1, 'name': 1, 'lock_history': 1, 'cash': 1},
+        ))
+        for row in rows:
+            row['locks'] = lock_count(row)
+        rows.sort(key=lambda row: row['locks'], reverse=True)
+        return rows[:10]
+
+    top_users = await asyncio.to_thread(_load_lock_leaderboard)
     sorted_users = [(int(info['user_id']), info) for info in top_users]
     if not sorted_users:
         await message.reply("📭 Список пуст.")
@@ -1188,7 +1323,7 @@ async def cmd_top(message: types.Message):
     text += "━━━━━━━━━━━━━━━━━\n\n"
     for i, (uid, info) in enumerate(sorted_users[:10], 1):
         medal = medals.get(i, f"<b>{i}.</b>")
-        locks = info.get('locks', 0)
+        locks = lock_count(info)
         cash = info.get('cash', 0.0)
         name = html.escape(str(info.get('name', 'Воркер')))
         text += f"{medal} <b>{name}</b>\n"
@@ -1660,11 +1795,11 @@ async def cmd_plus_lock(message: types.Message):
     if target_id is None:
         await message.reply(f"❌ Пользователь @{username_arg} не найден в базе.")
         return
-    target_data['locks'] = target_data.get('locks', 0) + 1
-    if 'lock_history' not in target_data:
+    if not isinstance(target_data.get('lock_history'), list):
         target_data['lock_history'] = []
     date_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
     target_data['lock_history'].append({'model': model_name, 'date': date_str})
+    target_data['locks'] = lock_count(target_data)
     save_db(user_fields={target_id: {"locks", "lock_history"}})
     await message.reply(
         f"🔒 <b>Лок добавлен!</b>\n\n👤 Воркер: @{username_arg}\n📱 Модель: <b>{model_name}</b>\n"
@@ -2073,7 +2208,7 @@ async def cb_adm_usr(call: types.CallbackQuery):
     t = user_data[target_id]
     card = (
         f"⚙️ <b>Управление воркером:</b> {t['name']}\n🆔 <b>ID:</b> <code>{target_id}</code>\n\n"
-        f"💰 <b>Касса:</b> {t['cash']:g} $\n├ Профитов: {t['profits']}\n└ Локов: {t['locks']}\n\n"
+        f"💰 <b>Касса:</b> {t['cash']:g} $\n├ Профитов: {t['profits']}\n└ Локов: {lock_count(t)}\n\n"
         f"👥 <b>Рефералы L1:</b> {t['ref_count_l1']} чел.\n└ Доход: {t['ref_money_l1']:.2f} USDT"
     )
     builder = InlineKeyboardBuilder()
@@ -2097,10 +2232,12 @@ async def cb_adm_edit_cash(call: types.CallbackQuery, state: FSMContext):
 async def cb_adm_edit_lock(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS: return
     target_id = int(call.data.split('_')[3])
-    await state.set_state(AdminStates.wait_lock)
-    await state.update_data(target_id=target_id)
-    await call.message.edit_text("Введите новое точное число локов:", reply_markup=get_cancel_markup())
-    await call.answer()
+    current_count = lock_count(user_data.get(target_id, {}))
+    await call.answer(
+        f"Сейчас {current_count} локов. Счётчик автоматически считается по истории. "
+        "Добавляйте локи через команду /pluslokhgasdgasdu.",
+        show_alert=True,
+    )
 
 @dp.callback_query(F.data.startswith('adm_edit_ref_'))
 async def cb_adm_edit_ref(call: types.CallbackQuery, state: FSMContext):
@@ -2137,7 +2274,7 @@ async def cb_menu_profile(call: types.CallbackQuery):
     profile_text = (
         f"👤 <b>Твой профиль {data['name']}</b> 🫶\n\n🏆 <b>Статистика:</b>\n"
         f"├ Твоя касса: {data['cash']:g} $\n├ Кол-во профитов: {data['profits']} профитов\n"
-        f"├ Кол-во локов: {data['locks']} локов\n├ Место в топе: # {top_place}\n\n"
+        f"├ Кол-во локов: {lock_count(data)} локов\n├ Место в топе: # {top_place}\n\n"
         f"⚙️ <b>Информация и текущие настройки</b>\n├ Тег в профитах: {data['tag']}\n"
         f"├ Статус: {status}\n├ Ранг: <tg-emoji emoji-id='{rank_emoji_id}'>🎓</tg-emoji> {data['rank']}\n\n⏳ <b>В команде:</b> {time_spent}"
     )
@@ -2163,7 +2300,7 @@ LOCKS_PER_PAGE = 15
 async def cb_my_locks(call: types.CallbackQuery):
     cid = call.message.chat.id
     data = init_user(cid, call.message.chat.first_name)
-    if data['locks'] == 0:
+    if lock_count(data) == 0:
         await call.answer("У вас пока нет локов", show_alert=True)
         return
     await cb_my_locks_page(call, 0)
@@ -2174,7 +2311,7 @@ async def cb_my_locks_page(call: types.CallbackQuery, page: int):
     history = data.get('lock_history', [])
     
     if not history:
-        text = f"🔒 <b>Ваши локи:</b> {data['locks']} шт.\n\nИстория локов пуста."
+        text = f"🔒 <b>Ваши локи:</b> {lock_count(data)} шт.\n\nИстория локов пуста."
         await call.message.edit_caption(caption=text, reply_markup=get_back_profile(), parse_mode="HTML")
         await call.answer()
         return
@@ -2187,7 +2324,7 @@ async def cb_my_locks_page(call: types.CallbackQuery, page: int):
     start = page * LOCKS_PER_PAGE
     end = start + LOCKS_PER_PAGE
     
-    text = f"🔒 <b>Ваши локи:</b> {data['locks']} шт.\n\n"
+    text = f"🔒 <b>Ваши локи:</b> {lock_count(data)} шт.\n\n"
     text += "<b>📋 История локов:</b>\n"
     
     for i, entry in enumerate(reversed_history[start:end], start + 1):
@@ -2374,8 +2511,8 @@ async def fsm_cash(message: types.Message, state: FSMContext):
             user_data[target_id]['profit_history'].append({'amount': amount, 'date': date_str})
             # Начисляем реферальные бонусы
             accrue_ref_bonuses(target_id, amount)
-        user_data[target_id]['locks'] = int(user_data[target_id]['cash'] // 500)
-        save_db(user_fields={target_id: {"cash", "profits", "profit_history", "locks"}})
+        # Баланс и локи независимы: изменение cash не меняет lock_history/locks.
+        save_db(user_fields={target_id: {"cash", "profits", "profit_history"}})
         await state.clear()
         builder = InlineKeyboardBuilder()
         builder.row(types.InlineKeyboardButton(text='👤 Вернуться в карточку', callback_data=f"adm_usr_{target_id}"))
@@ -2387,21 +2524,13 @@ async def fsm_cash(message: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.wait_lock)
 async def fsm_lock(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        await state.clear()
-        return
-    data_state = await state.get_data()
-    target_id = data_state.get('target_id')
-    try:
-        val = int(message.text)
-        user_data[target_id]['locks'] = val
-        save_db(user_fields={target_id: {"locks"}})
-        await state.clear()
-        builder = InlineKeyboardBuilder()
-        builder.row(types.InlineKeyboardButton(text='👤 Вернуться в карточку', callback_data=f"adm_usr_{target_id}"))
-        await message.answer(f"✅ Локи изменены на: {val}", reply_markup=builder.as_markup())
-    except ValueError:
-        await message.answer("⚠️ Введите целое число.")
+    # Legacy state guard: a lock counter cannot be edited without lock-history entries.
+    await state.clear()
+    if message.from_user.id in ADMIN_IDS:
+        await message.answer(
+            "Количество локов считается автоматически по истории. "
+            "Добавляйте реальные локи через /pluslokhgasdgasdu."
+        )
 
 @dp.message(AdminStates.wait_ref)
 async def fsm_ref(message: types.Message, state: FSMContext):

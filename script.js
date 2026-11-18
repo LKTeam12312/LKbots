@@ -198,13 +198,14 @@ function renderUser(user) {
     $('#welcomeName').textContent = displayName;
     animateMoney($('#myBalance'), user.cash);
     animateMoney($('#earnedTotal'), user.cash);
-    $('#lockCount').textContent = Number(user.locks) || 0;
+    const locks = Array.isArray(user.lock_history) ? user.lock_history : [];
+    const locksCount = locks.length;
+    $('#lockCount').textContent = locksCount;
     $('#profitCount').textContent = Number(user.profits) || 0;
     $('#userInfo').textContent = userTag;
     $('#rankLabel').textContent = text(user.rank, 'Студент');
 
-    const locks = Array.isArray(user.lock_history) ? user.lock_history : [];
-    $('#lockHistoryCount').textContent = locks.length;
+    $('#lockHistoryCount').textContent = locksCount;
     renderHistory($('#lockHistory'), locks, (item) => ({
         symbol: 'L',
         title: text(item.model, 'Новый лок'),
@@ -235,7 +236,7 @@ function renderUser(user) {
     $('#joinedAt').textContent = shortDate(user.joined_at);
     $('#profileAvatar').textContent = initials(displayName);
     $('#profileProfitCount').textContent = Number(user.profits) || 0;
-    $('#profileLockCount').textContent = Number(user.locks) || 0;
+    $('#profileLockCount').textContent = locksCount;
     $('#profileMemberId').textContent = String(user.user_id || '').slice(-6).padStart(6, '0');
 
     $('#tagInput').value = user.tag || '';

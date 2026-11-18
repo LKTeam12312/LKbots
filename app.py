@@ -173,6 +173,15 @@ def get_me():
         user = users_col.find_one({"user_id": g.user_id}, PUBLIC_USER_FIELDS)
         if not user:
             return api_error("Профиль не найден. Сначала запустите бота", 404)
+        history = user.get("lock_history")
+        history = history if isinstance(history, list) else []
+        actual_locks = len(history)
+        stored_locks = user.get("locks")
+        user["lock_history"] = history
+        user["locks"] = actual_locks
+        # Repair stale cached counter on read; cash is deliberately untouched.
+        if stored_locks != actual_locks:
+            users_col.update_one({"user_id": g.user_id}, {"$set": {"locks": actual_locks}})
         return jsonify({"success": True, "data": serialize_user(user)})
     except pymongo.errors.PyMongoError:
         logging.exception("Failed to load user %s", g.user_id)
@@ -225,12 +234,22 @@ def leaderboard(kind):
         return api_error("Неизвестный рейтинг", 404)
     sort_field = {"profits": "profits", "balance": "cash", "locks": "locks"}[kind]
     projection = {"_id": 0, "user_id": 1, "name": 1, "tag": 1, "rank": 1, sort_field: 1}
+    if kind == "locks":
+        projection["lock_history"] = 1
     try:
-        users = list(
-            users_col.find({"status_approved": True}, projection)
-            .sort(sort_field, pymongo.DESCENDING)
-            .limit(10)
-        )
+        if kind == "locks":
+            users = list(users_col.find({"status_approved": True}, projection))
+            for user in users:
+                history = user.get("lock_history")
+                user["locks"] = len(history) if isinstance(history, list) else 0
+            users.sort(key=lambda user: user["locks"], reverse=True)
+            users = users[:10]
+        else:
+            users = list(
+                users_col.find({"status_approved": True}, projection)
+                .sort(sort_field, pymongo.DESCENDING)
+                .limit(10)
+            )
         return jsonify({"success": True, "data": users})
     except pymongo.errors.PyMongoError:
         logging.exception("Failed to load leaderboard")
