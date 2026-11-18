@@ -147,7 +147,7 @@ function renderHistory(container, items, mapper, emptyMessage) {
         container.append(empty);
         return;
     }
-    items.slice().reverse().slice(0, 12).forEach((item) => container.append(makeHistoryItem(mapper(item))));
+    items.slice().reverse().forEach((item) => container.append(makeHistoryItem(mapper(item))));
 }
 
 function renderProfitFacts(profits) {

@@ -615,6 +615,28 @@ async def get_worker_card_identity(user_id: int, username_fallback: str):
     return rank, tag
 
 
+async def refresh_user_from_mongo(user_id: int):
+    """Refresh the in-memory profile from MongoDB before showing profile/history screens.
+
+    Leaderboards already read MongoDB directly. Keeping profile screens on the same
+    source prevents stale startup cache from hiding newer lock/profit history.
+    """
+    document = await asyncio.to_thread(
+        users_col.find_one,
+        {"user_id": int(user_id)},
+    )
+    if not document:
+        return user_data.get(int(user_id), {})
+    document.pop("_id", None)
+    document.pop("user_id", None)
+    history = document.get("lock_history")
+    document["lock_history"] = history if isinstance(history, list) else []
+    document["locks"] = len(document["lock_history"])
+    cached = user_data.setdefault(int(user_id), {})
+    cached.update(document)
+    return cached
+
+
 def init_user(chat_id: int, first_name: str, username: str | None = None):
     """Return the canonical MongoDB profile without ever resetting an existing user."""
     if is_blacklisted(chat_id):
@@ -2264,6 +2286,7 @@ async def cb_menu_main(call: types.CallbackQuery):
 async def cb_menu_profile(call: types.CallbackQuery):
     cid = call.message.chat.id
     data = init_user(cid, call.message.chat.first_name)
+    data = await refresh_user_from_mongo(cid)
     if not data['status_approved']:
         await call.answer("🔒 Доступ ограничен!", show_alert=True)
         return
@@ -2285,6 +2308,7 @@ async def cb_menu_profile(call: types.CallbackQuery):
 async def cb_my_profits(call: types.CallbackQuery):
     cid = call.message.chat.id
     data = init_user(cid, call.message.chat.first_name)
+    data = await refresh_user_from_mongo(cid)
     if len(data.get('profit_history', [])) == 0:
         await call.answer("У вас пока нет профитов", show_alert=True)
         return
@@ -2300,6 +2324,7 @@ LOCKS_PER_PAGE = 15
 async def cb_my_locks(call: types.CallbackQuery):
     cid = call.message.chat.id
     data = init_user(cid, call.message.chat.first_name)
+    data = await refresh_user_from_mongo(cid)
     if lock_count(data) == 0:
         await call.answer("У вас пока нет локов", show_alert=True)
         return
@@ -2308,6 +2333,7 @@ async def cb_my_locks(call: types.CallbackQuery):
 async def cb_my_locks_page(call: types.CallbackQuery, page: int):
     cid = call.message.chat.id
     data = init_user(cid, call.message.chat.first_name)
+    data = await refresh_user_from_mongo(cid)
     history = data.get('lock_history', [])
     
     if not history:
